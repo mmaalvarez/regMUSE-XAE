@@ -40,9 +40,9 @@ from utils import load_dataset, train_model, encoder_prediction
 
 ## pass arguments
 parser = argparse.ArgumentParser()
-parser.add_argument('--filename_real_data', type=str, required=True, help='Real dataset (i.e. before resamplings), all samples')
-parser.add_argument('--filename_dataset_permuted_training', type=str, required=True, help='PERMUTED TRAINING samples multiple tables (output from 1_parse_input.R; .tsv)')
-parser.add_argument('--filename_dataset_permuted_validation', type=str, required=True, help='PERMUTED VALIDATION samples single table (output from 1_parse_input.R; .tsv)')
+parser.add_argument('-r', '--filename_real_data', type=str, required=True, help='Real dataset (i.e. before resamplings), all samples')
+parser.add_argument('-t', '--filename_permuted_data_training', type=str, required=True, help='PERMUTED TRAINING samples multiple tables (output from 1_parse_input.R; .tsv)')
+parser.add_argument('-v', '--filename_permuted_data_validation', type=str, required=True, help='PERMUTED VALIDATION samples single table (output from 1_parse_input.R; .tsv)')
 parser.add_argument('--n_signatures', type=int, help='Number of signatures (neurons in the latent space) to explore', default = 2, required=False)
 parser.add_argument('--epochs', type=int, default=1000, help='Number of epochs; WARNING: there needs to exist in ./documents/ 1 different resampled training table per epoch, with the training filenames reflecting this, i.e. ./documents/*iter[1:epochs]*')
 parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
@@ -56,8 +56,8 @@ parser.add_argument('--outputDir', type=str, default='./res/', help='Directory t
 
 if 'ipykernel' in sys.modules: # if interactive, pass values manually
     filename_real_data = "original_coeff.tsv"
-    filename_dataset_permuted_training = "perm_coeff_iter*_training.tsv"
-    filename_dataset_permuted_validation = "perm_coeff_validation.tsv"
+    filename_permuted_data_training = "perm_coeff_iter*_training.tsv"
+    filename_permuted_data_validation = "perm_coeff_validation.tsv"
     n_signatures = 3
     epochs = 200
     batch_size = 25
@@ -70,8 +70,8 @@ if 'ipykernel' in sys.modules: # if interactive, pass values manually
 else:
     args = parser.parse_args()
     filename_real_data = args.filename_real_data
-    filename_dataset_permuted_training = args.filename_dataset_permuted_training
-    filename_dataset_permuted_validation = args.filename_dataset_permuted_validation
+    filename_permuted_data_training = args.filename_permuted_data_training
+    filename_permuted_data_validation = args.filename_permuted_data_validation
     n_signatures = args.n_signatures
     epochs = args.epochs
     batch_size = args.batch_size
@@ -88,8 +88,8 @@ else:
 # n_features indicates the number of input neurons (1 per feature included in regressions)
 # there must be as many available training files as epochs are specified
 real_data_df,real_data_sample_names,feature_names,n_features,training_validation_dfs_dict,seed = load_dataset(filename_real_data,
-                                                                                                              filename_dataset_permuted_training,
-                                                                                                              filename_dataset_permuted_validation,
+                                                                                                              filename_permuted_data_training,
+                                                                                                              filename_permuted_data_validation,
                                                                                                               epochs,
                                                                                                               validation_perc,
                                                                                                               normalization,

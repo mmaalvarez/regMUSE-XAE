@@ -38,7 +38,7 @@ def standardize_coefficients(data, n_samples):
     return np.array(standardized_coefficients, dtype='float64')
 
 
-def load_dataset(filename_real_data, filename_dataset_permuted_training, filename_dataset_permuted_validation, epochs, validation_perc, normalization, seed):
+def load_dataset(filename_real_data, filename_permuted_data_training, filename_permuted_data_validation, epochs, validation_perc, normalization, seed):
 
     ## load real data (no resamplings etc, all samples)
     real_data_df = pd.read_csv(f'./datasets/{filename_real_data}', sep='\t')
@@ -60,18 +60,18 @@ def load_dataset(filename_real_data, filename_dataset_permuted_training, filenam
     ## load all permuted tables (up to n=epochs) and store in a dict (separately training and validation sets); each pair will be used for a different epoch
 
     # for TRAINING there are many permuted tables in ./datasets/...
-    dataset_permuted_training_list_ALL = glob(f'./datasets/validation_perc_{validation_perc}/{filename_dataset_permuted_training}')
+    permuted_data_training_list_ALL = glob(f'./datasets/validation_perc_{validation_perc}/{filename_permuted_data_training}')
     
     # ...keep only up to n epochs
-    dataset_permuted_training_list = []
-    for permuted_df in dataset_permuted_training_list_ALL:
+    permuted_data_training_list = []
+    for permuted_df in permuted_data_training_list_ALL:
         if f'iter{epochs+1}' in permuted_df:
             break
         else:
-            dataset_permuted_training_list.append(permuted_df)
+            permuted_data_training_list.append(permuted_df)
             
     # make sure that there are as many training files as epochs
-    n_training_files = len(dataset_permuted_training_list)
+    n_training_files = len(permuted_data_training_list)
     try:
         assert n_training_files == epochs
     except AssertionError: 
@@ -81,10 +81,10 @@ def load_dataset(filename_real_data, filename_dataset_permuted_training, filenam
     # load training tables
     training_dfs_dict = dict()
     
-    for i,dataset_permuted_training in enumerate(dataset_permuted_training_list):
+    for i,permuted_data_training in enumerate(permuted_data_training_list):
         
         # load resampled table
-        training_df = pd.read_csv(dataset_permuted_training, sep='\t').set_index('Sample')
+        training_df = pd.read_csv(permuted_data_training, sep='\t').set_index('Sample')
         
         if i == 0:
             # how many features and training samples (should be ~= total n_samples × 'training_fraction' at 1_parse_input.R)
@@ -99,17 +99,17 @@ def load_dataset(filename_real_data, filename_dataset_permuted_training, filenam
 
 
     ## for VALIDATION there is a single permuted table
-    dataset_permuted_validation = glob(f'./datasets/validation_perc_{validation_perc}/{filename_dataset_permuted_validation}')
+    permuted_data_validation = glob(f'./datasets/validation_perc_{validation_perc}/{filename_permuted_data_validation}')
 
     try:
-        assert len(dataset_permuted_validation) == 1
-        dataset_permuted_validation = dataset_permuted_validation[0]
+        assert len(permuted_data_validation) == 1
+        permuted_data_validation = permuted_data_validation[0]
     except AssertionError: 
         print("Error: There is more than 1 (or none) validation tables!\n")
         sys.exit(1)
 
     # load validation table
-    validation_df = pd.read_csv(dataset_permuted_validation, sep='\t').set_index('Sample')
+    validation_df = pd.read_csv(permuted_data_validation, sep='\t').set_index('Sample')
 
     # how many features (should be same as for training) and validation samples (should be ~= total n_samples × (1 - 'training_fraction' at 1_parse_input.R))
     n_features_validation, n_samples_validation = len(validation_df.columns), len(validation_df.index)

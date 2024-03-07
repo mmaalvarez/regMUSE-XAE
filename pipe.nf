@@ -31,15 +31,14 @@ process run_autoencoder {
 
     conda activate musexae
 
-    python $PWD/regMUSE_XAE.py \
-        --filename_real_data "${filename_real_data}" \
-        --filename_permuted_data_training "${filename_permuted_data_training}" \
-        --filename_permuted_data_validation "${filename_permuted_data_validation}" \
-        --n_signatures ${n_signatures} \
-        --epochs ${epochs} \
-        --batch_size ${batch_size} \
-        --l1_size ${l1_size} \
-        --validation_perc ${validation_perc} \
-        --normalization ${normalization}
+    python $PWD/regMUSE_XAE.py --filename_real_data "${filename_real_data}" \
+                               --filename_permuted_data_training "${filename_permuted_data_training}" \
+                               --filename_permuted_data_validation "${filename_permuted_data_validation}" \
+                               --n_signatures ${n_signatures} \
+                               --epochs ${epochs} \
+                               --batch_size ${batch_size} \
+                               --l1_size ${l1_size} \
+                               --validation_perc ${validation_perc} \
+                               --normalization ${normalization}
     """
 }
