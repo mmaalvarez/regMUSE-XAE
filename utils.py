@@ -38,10 +38,10 @@ def standardize_coefficients(data, n_samples):
     return np.array(standardized_coefficients, dtype='float64')
 
 
-def load_dataset(real_data, filename_dataset_permuted_training, filename_dataset_permuted_validation, epochs, validation_perc, normalization, seed):
+def load_dataset(filename_real_data, filename_dataset_permuted_training, filename_dataset_permuted_validation, epochs, validation_perc, normalization, seed):
 
     ## load real data (no resamplings etc, all samples)
-    real_data_df = pd.read_csv(f'./datasets/{real_data}', sep='\t')
+    real_data_df = pd.read_csv(f'./datasets/{filename_real_data}', sep='\t')
 
     # store sample names column, renamed as "Sample"
     real_data_sample_names = real_data_df.drop(real_data_df.columns[1:], axis=1).rename(columns={'Sample': 'Sample'})
