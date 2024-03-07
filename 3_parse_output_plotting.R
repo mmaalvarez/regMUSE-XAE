@@ -1,14 +1,7 @@
 library(tidyverse)
 library(data.table)
-library(parallel)
-library(msm) # rtnorm
-#install.packages('terra', repos='https://rspatial.r-universe.dev')
-library(NMF) # for NMF to defeature_nameine optimal k signatures
-#ENMTools::install.extras("NMF")
-library(lsa)
 library(sigminer)
 library(cowplot)
-#library(cluster)
 library(ggrepel)
 #devtools::install_github("nicolash2/ggdendroplot")
 library(ggdendroplot)
@@ -18,13 +11,6 @@ conflict_prefer("rename", "dplyr")
 conflict_prefer("select", "dplyr")
 conflict_prefer("map", "purrr")
 conflict_prefer("extract", "magrittr")
-conflict_prefer("Position", "ggplot2")
-conflict_prefer("cosine", "lsa")
-conflict_prefer("clusterExport", "parallel")
-conflict_prefer("clusterEvalQ", "parallel")
-conflict_prefer("parLapply", "parallel")
-conflict_prefer("parLapplyLB", "parallel")
-conflict_prefer("nmf", "NMF")
 conflict_prefer("Position", "ggplot2")
 
 
@@ -90,333 +76,13 @@ samples_info = bind_rows(K562, iPSC) %>%
 
 
 
-coefficient_Resamp = read_tsv(Sys.glob(paste0("../coefficients_resampling/permuted_coefficients_*iters.tsv")))
-
-
-
-#####################################################################
-#### NMF
-#####################################################################
-
-
-#### evaluate best combination of n variables and k signatures
-
-coefficient_Resamp = coefficient_Resamp %>% 
-  ungroup %>% 
-  pivot_wider(names_from = feature_name, values_from = resampled_estimate) %>% 
-  unite("Sample", Sample, nIter, sep = "__") %>% 
-  # NAs to 0
-  mutate_all(~ifelse(is.na(.), 0, .)) %>% 
-  # remove features with all 0s
-  select(where(~any(. != 0)))
-
-# a) keep positive coefficients, and convert negative to zero 
-coefficient_Resamp_posmatrix = coefficient_Resamp %>% 
-  mutate_if(is.numeric,
-            ~if_else(.<=0, 0, .))
-# b) convert positive coefficients to zero, and convert negative to positive
-coefficient_Resamp_negmatrix = coefficient_Resamp %>% 
-  mutate_if(is.numeric,
-            ~if_else(.>=0, 0, abs(.)))
-# merge converted coefficients into the NMF input
-coefficient_Resamp = merge(coefficient_Resamp_posmatrix,
-                           coefficient_Resamp_negmatrix,
-                           by = "Sample",
-                           suffixes = c("_poscoeff", "_negcoeff")) %>%
-  mutate(Sample = gsub("__muts", "_muts", Sample)) %>% 
-  separate(Sample, into = c("id", "nIter"), sep = "__", remove = F) %>% 
-  mutate(Sample = gsub("__", "_nIter", Sample)) %>% 
-  column_to_rownames("Sample") %>% 
-  select(-id) %>% 
-  split(., f = .$nIter) %>% 
-  map(.f = list(. %>% data.matrix))
-
-
-
-## Run NMF for each resampled coefficients matrix generated in the previous step
-
-## Parameters and initializing of some objects
-set.seed(1)
-maxK = 12 # max number of signatures to consider, it will go from 2 to maxK -- shouldn't be larger than nº of features + expected_n_cosmic
-# resampled NMF input matrices, generated just once and then re-used for any possible # factors/clusters
-nmfHmatAllByFact = list()
-nmfWmatAllByFact = list()
-nCPUs = 8
-
-## "cl" is only used if using parLapply (creates a set of copies of R running in parallel and communicating over sockets, slower?) instead of mclapply (parallel processing):
-#cl = makeCluster(nCPUs)
-#clusterExport(cl, list("coefficient_Resamp"))
-#clusterEvalQ(cl, library(NMF))
-
-## extract nFact factors...
-for(nFact in 2:maxK){
-  
-  cat(sprintf("Running NMF: nFact %d (all iters)\n", nFact))
-  
-  # ...from each of the 1000 permuted matrices
-  nmfOutputByIter = mclapply(coefficient_Resamp,
-                             mc.cores = nCPUs,
-                             function(x, nFact){
-                               # store colnames
-                               orig_colnames_order = colnames(x)[-1] %>% 
-                                 gsub("\\&|\\-", "\\.", .)
-                               # NAs to 0
-                               x[is.na(x)] <- 0
-                               # store nIter
-                               nIter = x[1,1]
-                               x = x[,-1]
-                               ## cannot handle all-zero columns (such as MSH6-neg, since all coeff. are +...)
-                               # store their colnames
-                               all_zero_columns = data.frame(x) %>% 
-                                 select_if(colSums(.) <= 0) %>% 
-                                 colnames
-                               # remove them from matrix before NMF
-                               x_nozerocols = x[, colSums(x) > 0]
-                               ### NMF
-                               nmf_run = NMF::nmf(x_nozerocols, 
-                                                  rank = nFact, 
-                                                  maxIter = 10000, 
-                                                  seed = nIter)
-                               # re-add the all-zero columns as zeros
-                               all_zero_columns_matrix = data.frame(matrix(rep(0, len = length(all_zero_columns)), 
-                                                                           ncol = length(all_zero_columns), 
-                                                                           nrow = nrow(nmf_run@fit@H))) %>% 
-                                 `colnames<-`(all_zero_columns) %>% 
-                                 as.matrix
-                               full_matrix = cbind(nmf_run@fit@H, all_zero_columns_matrix) %>% 
-                                 data.frame
-                               # when making it data.frame the '(' '>' ')' '×' symbols become '.', so revert this
-                               full_matrix_colnames = colnames(full_matrix) %>% 
-                                 str_replace(., 
-                                             "([A,C,G,T])\\.([C,T])\\.([A,C,G,T])\\.([A,C,G,T])_", 
-                                             "\\1(\\2>\\3)\\4_") %>% 
-                                 str_replace(., "X53BP1", "53BP1")
-                               colnames(full_matrix) = full_matrix_colnames
-                               full_matrix = full_matrix %>% 
-                                 # reorder column names to be the same order as before
-                                 select(all_of(orig_colnames_order)) %>%
-                                 as.matrix
-                               nmf_run@fit@H = full_matrix
-                               nmf_run},
-                             nFact)
-  idString = sprintf("nFact=%03d", nFact)
-  nmfHmatAllByFact[[idString]] = matrix(nrow = 0, ncol = ncol(nmfOutputByIter[[1]])); # columns = original features...
-  nmfWmatAllByFact[[idString]] = matrix(nrow = 0, ncol = nrow(nmfOutputByIter[[1]])); # columns = samples...
-  for (nIter in 1:totalNumIters) {
-    nmfOutput = nmfOutputByIter[[nIter]]
-    # weights (H)
-    rownames(nmfOutput@fit@H) = sprintf("run%03d_fact%02d", nIter, 1:nFact)
-    # exposures ("basis", W)
-    colnames(nmfOutput@fit@W) = sprintf("run%03d_fact%02d", nIter, 1:nFact)
-    nmfHmatAllByFact[[idString]] = nmfHmatAllByFact[[idString]] %>% rbind(nmfOutput@fit@H) # same thing that you get using the coef(NMFfit) command in R   -> loadings
-    # WARNING: the rbind causes that the colnames become always ..._nIter1, e.g. MSM0.96_nIter2 --> MSM0.96_nIter1; this shouldn't matter as long as all samples are always in the same column i
-    nmfWmatAllByFact[[idString]] = nmfWmatAllByFact[[idString]] %>% rbind(t(nmfOutput@fit@W)) # same thing that you get using the basis(NMFfit) command in R  -> transformed data
-    gc()
-  }
-  gc()
-}
-#stopCluster(cl)
-#rm(idString, nmfOutput, nFact)
-
-## Save clustering results
-saveRDS(nmfHmatAllByFact, paste0("heatmap_Ks/", "Hmatrix.Rda")) # signatures
-#nmfHmatAllByFact = readRDS(paste0("heatmap_Ks/", "Hmatrix.Rda"))
-saveRDS(nmfWmatAllByFact, paste0("heatmap_Ks/", "Wmatrix.Rda")) # exposures
-#nmfWmatAllByFact = readRDS(paste0("heatmap_Ks/", "Wmatrix.Rda"))
-
-
-## [results of pos] + -[results of neg] to have a "-" sign when the larger/non-zero value comes from the neg. submatrix
-nmfHmatAllByFact_combined_pos_negcoeff = nmfHmatAllByFact %>% 
-  map(., ~as_tibble(.x, rownames = NA)) %>%
-  map(., ~rownames_to_column(.x, "id")) %>%
-  map(., ~pivot_longer(.x,
-                       cols = contains("coeff"),
-                       names_to = "dna_repair_feature_name",
-                       values_to = "Weight")) %>%
-  map(., ~mutate(.x, Weight = ifelse(str_detect(dna_repair_feature_name, "_negcoeff"),
-                                     -Weight,
-                                     Weight))) %>% 
-  map(., ~mutate(.x, dna_repair_feature_name = gsub("_...coeff", "", dna_repair_feature_name))) %>% 
-  map(., ~group_by(.x, dna_repair_feature_name, id)) %>%
-  map(., ~summarise(.x, Weight = .Primitive("+")(Weight[1], Weight[2]))) %>%
-  map(., ~ungroup(.x)) %>%
-  ## scale weights per signature so they add up to 1
-  #map(., ~group_by(.x, id)) %>% 
-  #map(., ~mutate(.x, sumWeight = sum(Weight))) %>% 
-  #map(., ~group_by(.x, id, dna_repair_feature_name)) %>% 
-  #map(., ~summarise(.x, Weight = Weight/sumWeight)) %>% 
-  #map(., ~ungroup(.x)) %>% 
-  ## go to original format
-  map(., ~pivot_wider(.x, names_from = dna_repair_feature_name, values_from = Weight)) %>%
-  # arrange iterations (rows)
-  map(., ~arrange(.x, id)) %>%
-  map(., ~column_to_rownames(.x, 'id')) %>%
-  # arrange dna repair feature_name names (columns)
-  map(.f = list(. %>% select(coefficient_Resamp[[1]] %>% 
-                               data.frame %>% 
-                               select(contains("poscoeff")) %>% 
-                               names() %>% 
-                               # when making it data.frame the '(' '>' ')'symbols become '.', so revert this
-                               str_replace(., 
-                                           "([A,C,G,T])\\.([C,T])\\.([A,C,G,T])\\.([A,C,G,T])_", 
-                                           "\\1(\\2>\\3)\\4_") %>% 
-                               str_replace(., "X53BP1", "53BP1") %>% 
-                               gsub("_poscoeff", "", .)))) %>%
-  map(., ~as.matrix(.x))
-
-
-
-## Cluster the NMF factors, and find combination that yields best silhouette (and possibly deviation from random data)
-## Also run in parallel on as many CPUs as specified
-## Returns a data.table with nFact, k, and the quality measures per nFact*k combination.
-#' @param maxNumClusters Global override - holds true for any number of nFact... note that some nFact will have less clusters than that 
-#'                       For a given nFact, the max # clusters is 5*nFact.  Meaning: max 10 clusters for 2 factors, max 15 for 3 factors, etc.
-#'                       (probably even this many does not make sense to extract...)
-
-# initialize cosine distance function which is used for clustering
-cosineDist <- function(x) {
-  mat = as.dist(t(1 - cosine(t(x))))
-  return(mat)
-}
-
-# cosine SIMILARITY will be used later for similarities between signatures' regional features weight profiles
-cosineSimil <- function(x) {
-  mat = t(cosine(t(x)))
-  return(mat)
-}
-
-# initialize function for clustering
-optimizeClustersPar = function(nmfHmatAllByFact_combined_pos_negcoeff = NULL, maxNumClusters = maxK, threads = nCPUs) {
-  # the highest nFact (number of factors) we had checked in this dataset... the lowest is always assumed to be ==2 but this could be inspected as well
-  maxNumFact = names(nmfHmatAllByFact_combined_pos_negcoeff) %>% 
-    str_match("^nFact=(\\d+)") %>% .[, 2] %>% as.integer %>% max
-  
-  cl = makeCluster(threads, useXDR = F) # 'makeCluster' refers to computer clusters!
-  clusterEvalQ(cl, library(cluster)) # to be able to run "pam" ('cluster' refers to data clustering, not computer clusters!)  
-  sigDiscoScores = data.table()
-  numNmfIters = -1 # this will be found from the nmfHmatAllByFact_combined_pos_negcoeff
-  
-  gc()
-  
-  for (aNmfSettings in names(nmfHmatAllByFact_combined_pos_negcoeff)) {
-    
-    # aNmfSettings is a string like "nFact=002", which encodes both the "nFact" parameter
-    nFact = aNmfSettings %>% str_match("^nFact=(\\d+)") %>% .[, 2] %>% as.integer
-    
-    # how many iterations of NMF were run for this maxNumFact
-    if (numNmfIters == -1) {
-      numNmfIters = nmfHmatAllByFact_combined_pos_negcoeff[[aNmfSettings]] %>% rownames %>% str_match("^run(\\d+)_") %>% .[, 2] %>% as.integer %>% max
-    } else {
-      numNmfIters2 = nmfHmatAllByFact_combined_pos_negcoeff[[aNmfSettings]] %>% rownames %>% str_match("^run(\\d+)_") %>% .[, 2] %>% as.integer %>% max
-      if (numNmfIters != numNmfIters2) {
-        cat(sprintf("For aNmfSettings=%s, the numNmfIters %d is different than previously, when it was %d. Will continue running normally.\n", aNmfSettings, numNmfIters2, numNmfIters))
-      }
-    }
-    
-    ## get matrix of cosine distances between nFact×r factors (nFact = aNmfSettings, r = 1000 matrices)
-    # each factor's vector goes from coord. origin to a point whose coordinates are its weights vector (so if 8 chromatin features, it's an intersection point of 8 dimensions)
-    nmfReBootstrappedDists = cosineDist(nmfHmatAllByFact_combined_pos_negcoeff[[aNmfSettings]])
-    gc()
-    
-    # parallel code: in each thread, runs the "pam" clustering for a different # clusters, starting from the same matrix of cosine similarities
-    # (note: Sanger (Alexandrov et al.) always run this with #clusters = #NMF factors, which may not be ideal)
-    clusterExport(cl = cl, list("nmfReBootstrappedDists"), envir = environment()) # , envir=tand)
-    pamOutputByIter = parLapplyLB(# load balancing
-      cl = cl,
-      X = as.list(rev(2:min(maxNumClusters, nFact * 5))), # pam() with different values of k is run in parallel 
-      fun = function(x) {
-        set.seed(42 + x)
-        # partitioning (clustering) of the nFact×r factors into k clusters "around medoids" (a more robust version of K-means), based on the cosine measures matrix
-        pam(nmfReBootstrappedDists, k = x, diss = T)
-      })
-    gc()
-    
-    for (clusters in pamOutputByIter) {
-      k = length(clusters$medoids)
-      ## get clustering "stability": mean(clusters$silinfo$clus.avg.widths), i.e. average-across-K-clusters of the average silhouette widths per cluster
-      # "silhouette width" of a sample (i.e. a given nFactor×run) i in a cluster is the "dissimilarity between i and the closest sample from an external cluster"
-      sigDiscoScores = sigDiscoScores %>% 
-        rbind(data.table(nFact = nFact, 
-                         k = k,
-                         avgClScore = mean(clusters$silinfo$clus.avg.widths), 
-                         minClScore = min(clusters$silinfo$clus.avg.widths),
-                         secondWorstClScore = clusters$silinfo$clus.avg.widths[order(clusters$silinfo$clus.avg.widths)][2],
-                         avgPtScore = mean(silhouette(clusters)[, "sil_width"]), 
-                         medianPtScore = median(silhouette(clusters)[, "sil_width"])))
-      cat(sprintf("%02d\t%02d\t%.4f\t%.4f\t%.4f\t%.4f\t%.4f\n",
-                  nFact, k,
-                  mean(clusters$silinfo$clus.avg.widths), 
-                  min(clusters$silinfo$clus.avg.widths),
-                  clusters$silinfo$clus.avg.widths[order(clusters$silinfo$clus.avg.widths)][2],
-                  mean(silhouette(clusters)[, "sil_width"]), 
-                  median(silhouette(clusters)[, "sil_width"])))
-      gc()
-    }
-  }
-  
-  stopCluster(cl)
-  #rm(maxNumClusters, threads, cl, pamOutputByIter, k )
-  return(sigDiscoScores)
-}
-
-# run clustering
-sigClusterScores = optimizeClustersPar(nmfHmatAllByFact_combined_pos_negcoeff, 
-                                       maxNumClusters = maxK)
-
-## Save clustering results 
-saveRDS(sigClusterScores, paste0("heatmap_Ks/", "sigClusterScores.Rda")) # 'quality' of clustering(s), used to defeature_nameine the number of signatures 
-#sigClusterScores = readRDS(paste0("heatmap_Ks/", "sigClusterScores.Rda"))
-
-
-## Visualize the clustering quality scores in heatmaps (faceted by the 'smooth' parameter)
-heatmap_clustering = sigClusterScores[k <= maxK] %>% 
-  melt(id.vars = c("nFact", "k"),
-       measure.vars = "avgClScore") %>%
-  rename("Stability" = "value")
-
-heatmap_clustering_plot = ggplot(heatmap_clustering %>% 
-                                   # only maxK factors and k
-                                   filter(nFact<=maxK & k<=maxK),
-                                 aes(nFact, k)) +
-  scale_x_continuous(breaks = seq(2, maxK)) +
-  scale_y_continuous(breaks = seq(2, maxK)) +
-  #coord_fixed() +
-  geom_tile(aes(fill = Stability)) +
-  scale_fill_gradient2(low = "white", high = "blue", midpoint = 0,
-                       breaks = seq(-0.25,1.25,0.25)) +
-  geom_label(aes(label = round(Stability, 2)),
-             #fontface = "bold",
-             label.r = unit(0.01, "lines"),
-             label.size = unit(0, "mm"),
-             label.padding  = unit(0.01, "lines"),
-             size = 8) +
-  xlab("N factors") +
-  ylab("K clusters") +
-  theme_classic() +
-  theme(text = element_text(size = 28),
-        legend.position = "top",
-        legend.text = element_text(angle = 90, vjust = 0.5, hjust = 0.25))
-
-ggsave(paste0("heatmap_Ks/NMF_heatmap_clustering_maxnFact", maxK, "_maxK", maxK, ".jpg"),
-       plot = heatmap_clustering_plot,
-       device = "jpg",
-       width = 12.5,
-       height = 7,
-       dpi = 600)
-
 
 ####
-### Run NMF for optimal signatures
 
 ## for plots
 dir.create("plots")
 # for exposures and weights matrices
 dir.create("exposures_weights")
-## for QC (the deviance between NMF fitted model and original coefficients matrices in regfeat+SBS96 matrices vs. in SBS96-only matrices)
-dir.create("QC")
-deviances_list = list()
-# this stores deviances after removing the reg feat residuals, for a direct comparison to SBS96only
-deviances_NO_REG_FEAT_list = list()
 # for significance deltas (regfeat vs SBS96) of pairwise signature cosine similarities 
 dir.create("plots/cos_sim_deltas")
 real_deltas_vs_bootstrap_hits = list()
@@ -464,8 +130,9 @@ names(fixed_jet_colors) = sample_pheno_levels
 ## create plots
 
 # define combinations of nFact and k that we want to plot
-range_nFact = seq(3, maxK)
-range_k = seq(3, maxK)
+maxK = 12
+range_nFact = seq(2, maxK)
+range_k = seq(2, maxK)
 optimal_nFact_k_list = expand.grid(range_nFact, # nFact
                                    range_k) %>% # K
   as.matrix %>% t %>% data.frame %>% as.list
@@ -479,56 +146,6 @@ for(optimal_nFact_k in optimal_nFact_k_list){
   wMatHere = nmfWmatAllByFact[[sprintf("nFact=%03d", nFact)]]
   hMatHere = nmfHmatAllByFact[[sprintf("nFact=%03d", nFact)]] # the NMF w-matrices had been transposed, so rows in the H-matrices and in the W-matrices are the same
 
-  #### for QC: calculate the deviance between each NMF fitted model and its corresponding original (positivized) coefficient matrix (i.e. for each nFact==[2-12] × iter==[1-100] combination); this will be compared to the equivalent when there are only SBS96 coeff, to see whether we actually get more accurate NMF fit when SBS96 coefficients are combined with regional feature coefficients
-  if(is.null(deviances_list[[paste0('nFact',nFact)]])){ # only do it if it has not been already done for a previous optimal_k
-
-    deviances_list[[paste0('nFact',nFact)]] = list()
-    deviances_NO_REG_FEAT_list[[paste0('nFact',nFact)]] = list()
-
-    for(nIter in 1:totalNumIters){
-
-      original_matrix = coefficient_Resamp[[nIter]]
-      # remove first column
-      original_matrix = original_matrix[, colnames(original_matrix) != "nIter"]
-      # sometimes it can be that e.g. coefficient_Resamp[[6]] contains ..._nIter013 in rownames
-      actual_nIter = rownames(original_matrix) %>% gsub(".*_nIter", "", .) %>% unique %>% as.numeric %>% sprintf("%03d", .)
-
-      exposures_this_actual_nIter = wMatHere %>%
-        data.frame %>%
-        rownames_to_column("nIter_nFact") %>%
-        filter(str_detect(nIter_nFact, paste0("run",actual_nIter,"_"))) %>%
-        column_to_rownames("nIter_nFact") %>%
-        as.matrix %>%
-        t
-
-      weights_this_actual_nIter = hMatHere %>%
-        data.frame %>%
-        rownames_to_column("nIter_nFact") %>%
-        filter(str_detect(nIter_nFact, paste0("run",actual_nIter,"_"))) %>%
-        column_to_rownames("nIter_nFact") %>%
-        as.matrix
-
-      exposures_by_weights = exposures_this_actual_nIter %*% weights_this_actual_nIter
-
-      # mean of the squared differences
-      original_vs_nmf_deviance = sum(as.numeric((exposures_by_weights - original_matrix)^2)) / prod(dim(original_matrix))
-
-      deviances_list[[paste0('nFact',nFact)]][[paste0('nIter',nIter)]] = original_vs_nmf_deviance
-
-      # mean of the squared differences without regfeat columns
-      original_matrix_NO_REG_FEAT = data.frame(original_matrix) %>%
-        select(contains(".")) %>% as.matrix
-      exposures_by_weights_NO_REG_FEAT = data.frame(exposures_by_weights) %>%
-        select(contains(".")) %>% as.matrix
-      original_vs_nmf_deviance_NO_REG_FEAT = sum(as.numeric((exposures_by_weights_NO_REG_FEAT - original_matrix_NO_REG_FEAT)^2)) / prod(dim(original_matrix_NO_REG_FEAT))
-      deviances_NO_REG_FEAT_list[[paste0('nFact',nFact)]][[paste0('nIter',nIter)]] = original_vs_nmf_deviance_NO_REG_FEAT
-
-      gc()
-    }
-  }
-  ####
-  
-  ## continue
   rownames(wMatHere) = gsub("run", "Run ", rownames(wMatHere))
   rownames(wMatHere) = gsub("fact0", "", rownames(wMatHere))
   rownames(wMatHere) = gsub("fact", "", rownames(wMatHere))
@@ -538,56 +155,12 @@ for(optimal_nFact_k in optimal_nFact_k_list){
   rownames(hMatHere) = gsub("fact", "", rownames(hMatHere))
   rownames(hMatHere) = gsub("_", "\nFactor ", rownames(hMatHere))
 
-  # need to run the clustering again...
-  set.seed(42 + optimal_k) # this should reproduce the same output as in the "optimizeClustersPar"
-  clustHere = pam(cosineDist(hMatHere), k = optimal_k, diss = T)
-  # medoid: sample in a cluster that is the least dissimilar on average to all the other samples in that cluster
-  signatures = copy(hMatHere[clustHere$medoids,])
-  # sort signatures based on their stability
-  signature_stabilities = data.frame('Signature' = clustHere$medoids, 'Stability' = round(clustHere$silinfo$clus.avg.widths,4)) %>%
-    arrange(Stability)
-  signature_stabilities_sorted = as.character(signature_stabilities$Stability)
-  signatures_sorted = signature_stabilities$Signature
-
   # get sample exposures for these cluster medoids (signatures)
   sample_exposures = wMatHere %>%
     as_tibble() %>%
     mutate(signature = rownames(wMatHere)) %>%
     filter(signature %in% signatures_sorted) %>%
     arrange(signature) %>% relocate(signature)
-
-  # and again, [results of pos] + -[results of neg] to have a "-" sign when the larger/non-zero value comes from the neg. submatrix
-  signatures_combined_pos_negcoeff = signatures %>%
-    as_tibble(rownames = NA) %>%
-    rownames_to_column("id") %>%
-    pivot_longer(cols = contains("coeff"),
-                 names_to = "dna_repair_feature_name",
-                 values_to = "Weight") %>%
-    mutate(Weight = ifelse(str_detect(dna_repair_feature_name, "_negcoeff"),
-                           -Weight,
-                           Weight),
-           dna_repair_feature_name = gsub("_...coeff", "", dna_repair_feature_name)) %>%
-    group_by(dna_repair_feature_name, id) %>%
-    summarise(Weight = .Primitive("+")(Weight[1], Weight[2])) %>%
-    ungroup() %>%
-    ## scale weights per signature so they add up to 1
-    #group_by(id) %>%
-    #mutate(sumWeight = sum(Weight)) %>%
-    #group_by(id, dna_repair_feature_name) %>%
-    #summarise(Weight = Weight/sumWeight) %>%
-    #ungroup() %>%
-    ## go to original format
-    pivot_wider(names_from = dna_repair_feature_name, values_from = Weight) %>%
-    # arrange iterations (rows)
-    arrange(id) %>%
-    column_to_rownames('id') %>%
-    # arrange dna repair feature_name names (columns)
-    select(coefficient_Resamp[[1]] %>%
-             as_tibble %>%
-             select(contains("poscoeff")) %>%
-             names() %>%
-             gsub("_poscoeff", "", .)) %>%
-    as.matrix()
 
 
   ## parse signature weights
@@ -1205,7 +778,7 @@ for(optimal_nFact_k in optimal_nFact_k_list){
                              NULL,
                              ncol = 9,
                              rel_widths = c(0.02, 1, 0.02, 0.2, 0.01, 0.1, 0.01,0.1, 0.01))
-  ggsave(paste0("plots/NMF_exposures_weights_plot__nFact", nFact, "_K", optimal_k, ".jpeg"),
+  ggsave(paste0("plots/regMUSE-XAE_exposures_weights_plot__nFact", nFact, "_K", optimal_k, ".jpeg"),
          plot = combined_plots,
          device = "jpeg",
          width = 25,
@@ -1220,12 +793,3 @@ write_tsv(bind_rows(real_deltas_vs_bootstrap_hits) %>%
 write_tsv(bind_rows(regfeats_cosmic_assoc) %>% 
             arrange(nFact, K, Sigpair_i),
           "plots/cos_sim_deltas/regfeats_cosmic_assoc.tsv")
-
-
-write_tsv(bind_rows(deviances_list) %>% 
-            as.matrix %>% t %>% data.frame %>% `colnames<-`(paste0("nFact", range_nFact)), 
-          "QC/deviances_with_regfeat_coeff.tsv")
-
-write_tsv(bind_rows(deviances_NO_REG_FEAT_list) %>% 
-            as.matrix %>% t %>% data.frame %>% `colnames<-`(paste0("nFact", range_nFact)), 
-          "QC/deviances_REGFEAT_REMOVED.tsv")

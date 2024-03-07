@@ -1,22 +1,23 @@
 #!/usr/bin/env nextflow
 
 // variables (channels)
-n_signatures = Channel.from( [ '2', '3' ] ) //, '4', '5', '6', '7', '8', '9', '10', '11', '12' ] )
+n_signatures = Channel.from( [ '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12' ] )
 epochs = Channel.from( [ '1000' ] )
-batch_size = Channel.from( [ '32' ] ) //, '64', '128' ] )
-l1_size = Channel.from( [ '64' ] ) //, '128', '256' ] )
-validation_perc = Channel.from( [ '10' ] ) //, '20', '30' ] )
-normalization = Channel.from( [ 'True' ] ) //, 'False' ] )
+batch_size = Channel.from( [ '32', '64', '128' ] )
+l1_size = Channel.from( [ '64', '128', '256' ] )
+validation_perc = Channel.from( [ '10', '20', '30' ] )
+normalization = Channel.from( [ 'True', 'False' ] )
 
 process run_autoencoder {
 
     publishDir "$PWD/res/", mode: 'copy'
 
     time = { (params.minutes + 5*(task.attempt-1)).min }
-    memory = { (params.memGB + 4*(task.attempt-1)).GB }
+    memory = { (params.memGB + 2*(task.attempt-1)).GB }
 
     input:
     // fixed paths
+    path inputDir from params.inputDir
     val filename_real_data from params.filename_real_data
     val filename_permuted_data_training from params.filename_permuted_data_training
     val filename_permuted_data_validation from params.filename_permuted_data_validation
@@ -31,7 +32,8 @@ process run_autoencoder {
 
     conda activate musexae
 
-    python $PWD/regMUSE_XAE.py --filename_real_data "${filename_real_data}" \
+    python $PWD/regMUSE_XAE.py --inputDir ${inputDir} \
+                               --filename_real_data "${filename_real_data}" \
                                --filename_permuted_data_training "${filename_permuted_data_training}" \
                                --filename_permuted_data_validation "${filename_permuted_data_validation}" \
                                --n_signatures ${n_signatures} \

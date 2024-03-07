@@ -51,8 +51,9 @@ parser.add_argument('--validation_perc', type=int, default=20, help='% of the to
 parser.add_argument('--loss', type=str, default='mean_squared_error', help='Loss function to use in the autoencoder')
 parser.add_argument('--activation', type=str, default='softplus', help='Activation function')
 parser.add_argument('--normalization', type=bool, default=True, help='Whether or not to perform standardization of the input layer (coefficients)')
+parser.add_argument('--inputDir', type=str, default='$PWD/datasets/', help='Directory where input data is stored')
+parser.add_argument('--outputDir', type=str, default='$PWD/res/', help='Directory to save results')
 parser.add_argument('--seed', type=int, required=False, help='Specify a seed, otherwise it will be selected based on the current time')
-parser.add_argument('--outputDir', type=str, default='./res/', help='Directory to save results')
 
 if 'ipykernel' in sys.modules: # if interactive, pass values manually
     filename_real_data = "original_coeff.tsv"
@@ -66,7 +67,8 @@ if 'ipykernel' in sys.modules: # if interactive, pass values manually
     loss = 'mean_squared_error'
     activation = 'softplus'
     normalization = True
-    outputDir = "./res/"
+    inputDir = "$PWD/datasets/"
+    outputDir = "$PWD/res/"
 else:
     args = parser.parse_args()
     filename_real_data = args.filename_real_data
@@ -80,11 +82,12 @@ else:
     loss = args.loss
     activation = args.activation
     normalization = args.normalization
+    inputDir = args.inputDir
     outputDir = args.outputDir
     
 
 ## load datasets
-# they have to be in ./datasets/validation_perc_{validation_perc}/
+# they have to be in ./inputDir/validation_perc_{validation_perc}/
 # n_features indicates the number of input neurons (1 per feature included in regressions)
 # there must be as many available training files as epochs are specified
 real_data_df,real_data_sample_names,feature_names,n_features,training_validation_dfs_dict,seed = load_dataset(filename_real_data,
@@ -93,6 +96,7 @@ real_data_df,real_data_sample_names,feature_names,n_features,training_validation
                                                                                                               epochs,
                                                                                                               validation_perc,
                                                                                                               normalization,
+                                                                                                              inputDir,
                                                                                                               seed=None)
 ## create output folder
 output_folder_name = f'nFeatures_{str(n_features)}__' \
@@ -110,8 +114,7 @@ if 'ipykernel' in sys.modules: # if interactive, create folders
     output_folder_name = outputDir + output_folder_name
     if not os.path.exists(output_folder_name):
         os.mkdir(output_folder_name)
-else: ## not interactive (nextflow handles the autoencoder_output folder creation)
-    output_folder_name = outputDir + output_folder_name
+else: ## not interactive (nextflow handles the 'outputDir/' folder creation)
     os.mkdir(output_folder_name)
 
     

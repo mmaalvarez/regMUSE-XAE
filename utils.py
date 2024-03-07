@@ -38,7 +38,7 @@ def standardize_coefficients(data, n_samples):
     return np.array(standardized_coefficients, dtype='float64')
 
 
-def load_dataset(filename_real_data, filename_permuted_data_training, filename_permuted_data_validation, epochs, validation_perc, normalization, seed):
+def load_dataset(filename_real_data, filename_permuted_data_training, filename_permuted_data_validation, epochs, validation_perc, normalization, inputDir, seed):
 
     ## load real data (no resamplings etc, all samples)
     real_data_df = pd.read_csv(f'./datasets/{filename_real_data}', sep='\t')

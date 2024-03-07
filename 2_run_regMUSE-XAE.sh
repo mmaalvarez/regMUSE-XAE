@@ -11,9 +11,10 @@ export NXF_DEFAULT_DSL=1
 
 mkdir -p log/
 
-nextflow -log $PWD/log/nextflow.log run pipe.nf --filename_real_data "original_coeff.tsv" \
+nextflow -log $PWD/log/nextflow.log run pipe.nf --inputDir $PWD/datasets/ \
+												--filename_real_data "original_coeff.tsv" \
 												--filename_permuted_data_training "perm_coeff_iter*_training.tsv" \
 												--filename_permuted_data_validation "perm_coeff_validation.tsv" \
-												--minutes 5 \
-												--memGB 4 \
+												--minutes 4 \
+												--memGB 2 \
 												-resume
