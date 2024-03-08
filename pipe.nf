@@ -26,7 +26,7 @@ process run_autoencoder {
 
     output:
     path 'nFeatures_*__nSignatures_*__nEpochs_*__batchSize_*__l1Size_*__validationPerc_*__normalization_*__seed_*/*'
-    file 'best_model_losses_epoch.tsv' as best_model_losses_epoch
+    file 'best_model_losses_epoch.tsv' into best_model_losses_epoch
 
     """
     #!/usr/bin/env bash
