@@ -134,7 +134,7 @@ def load_dataset(filename_real_data, filename_permuted_data_training, filename_p
           
     ## also choose a seed, if there is not any specific one requested
     if seed == None:
-        seed = int(datetime.datetime.now().timestamp())
+        seed = int(str(int(datetime.datetime.now().timestamp() * 1e10))[11:])
 
     return real_data_df, real_data_sample_names, feature_names, n_features_training, training_validation_dfs_dict, seed
 
@@ -282,6 +282,11 @@ def train_model(training_validation_dfs_dict, input_dim, feature_names, n_signat
     best_model_validation_loss = autoencoder.evaluate(autoencoder.val_data, autoencoder.val_data)[0]
     min_val_loss_epoch = history['val_loss'].index(min(history['val_loss'])) + 1
     
+    best_model_losses_epoch = pd.DataFrame({'output_folder_name': [output_folder_name],
+                                            'best_model_training_loss': [best_model_training_loss],
+                                            'best_model_validation_loss': [best_model_validation_loss],
+                                            'min_val_loss_epoch': [min_val_loss_epoch]})
+    
     print(f"The model from epoch {min_val_loss_epoch} has the lowest validation loss, and therefore it will be used to obtain the final signatures:")
     print(f'Best model\'s training loss: {best_model_training_loss.round(2)}')
     print(f'Best model\'s validation loss: {best_model_validation_loss.round(2)}\n')
@@ -291,7 +296,7 @@ def train_model(training_validation_dfs_dict, input_dim, feature_names, n_signat
     # append feature names column
     signature_weights = pd.concat([feature_names, signature_weights], axis=1)
     
-    return autoencoder,encoder,loss_plot,signature_weights
+    return autoencoder,encoder,loss_plot,best_model_losses_epoch,signature_weights
 
 
 def encoder_prediction(encoder, real_df, real_data_sample_names, n_signatures):
