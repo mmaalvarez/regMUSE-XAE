@@ -75,12 +75,68 @@ samples_info = bind_rows(K562, iPSC) %>%
   bind_rows(petljak)
 
 
+dir.create("plots")
+
+###########
+## plot all parameter configurations' losses info
+all_best_model_losses_epoch = read_tsv("res/all_best_model_losses_epoch.tsv") %>% 
+  separate(output_folder_name,
+           into = c('nFeatures','nSignatures','nEpochs','batchSize','l1Size','validationPerc','normalization','seed'), sep = "__") %>% 
+  mutate(across(matches(c('nFeatures','nSignatures','nEpochs','batchSize','l1Size','validationPerc','normalization','seed')),
+                ~gsub(".*_", "", .))) %>% 
+  mutate(across(matches(c('nFeatures','nSignatures','nEpochs','batchSize','l1Size','validationPerc')),
+                ~as.numeric(.))) %>% 
+  mutate(across(matches(c('nFeatures','nSignatures','nEpochs','batchSize','l1Size','validationPerc')),
+                ~factor(., levels = sort(unique(.)))),
+         `Validation / training loss` = best_model_validation_loss / best_model_training_loss) %>% 
+  pivot_longer(cols = contains('best_model_'),
+               names_to = 'model', values_to = 'loss') %>% 
+  mutate(model = gsub("best_model_|_loss", "", model)) %>% 
+  ## get mean loss, "Validation / training loss", and min_val_loss_epoch for same-parameter (except seed) runs, if they exist
+  group_by(nFeatures,nSignatures,nEpochs,batchSize,l1Size,validationPerc,normalization,model) %>% 
+  summarise_at(vars(min_val_loss_epoch, `Validation / training loss`, loss),
+               ~mean(.)) %>% 
+  ungroup
+  
+all_best_model_losses_epoch_plot = ggplot(all_best_model_losses_epoch,
+                                          aes(x = model,
+                                              y = loss,
+                                              col = `Validation / training loss`)) +
+  geom_col(aes(fill = model),
+           linewidth = 1) +
+  scale_fill_manual(values = c("black", "lightgray")) +
+  coord_flip() +
+  geom_tile() +
+  scale_color_gradient2(low = "red", 
+                        mid = "blue",
+                        high = "red",
+                        midpoint = 1) +
+  geom_label(aes(label = min_val_loss_epoch),
+             fill = "white",
+             col = "black",
+             size = 2,
+             nudge_y = 0,
+             label.padding = unit(0.01, "lines"),
+             label.size = 0) +
+  ggh4x::facet_nested(rows = vars(nSignatures, batchSize),
+                      cols = vars(normalization, validationPerc, l1Size),
+                      labeller = label_both) +
+  xlab("") +
+  ylab(paste0("Best model's training vs. validation losses for ",unique(all_best_model_losses_epoch$nFeatures)," features and ",unique(all_best_model_losses_epoch$nEpochs)," epochs -- Epoch of min. validation loss indicated")) +
+  theme_classic() +
+  theme(text = element_text(size = 7),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        legend.position = "top")
+ggsave("plots/all_best_model_losses_epoch.jpg",
+       plot = all_best_model_losses_epoch_plot,
+       device = "jpg",
+       width = 16,
+       height = 9,
+       dpi = 600)
 
 
 ####
-
-## for plots
-dir.create("plots")
 # for exposures and weights matrices
 dir.create("exposures_weights")
 # for significance deltas (regfeat vs SBS96) of pairwise signature cosine similarities 
