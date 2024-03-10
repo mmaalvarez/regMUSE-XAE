@@ -53,7 +53,7 @@ def load_dataset(filename_real_data, filename_permuted_data_training, filename_p
 
     real_data_df = real_data_df.set_index('Sample')
     
-    if normalization == 'True':
+    if normalization == 'yes':
         # standardize coefficients
         real_data_df = standardize_coefficients(real_data_df, n_samples_total)
 
@@ -90,7 +90,7 @@ def load_dataset(filename_real_data, filename_permuted_data_training, filename_p
             # how many features and training samples (should be ~= total n_samples × 'training_fraction' at 1_parse_input.R)
             n_features_training, n_samples_training = len(training_df.columns), len(training_df.index)
         
-        if normalization == 'True':
+        if normalization == 'yes':
             # standardize coefficients
             training_df = standardize_coefficients(training_df, n_samples_training)
         
@@ -120,7 +120,7 @@ def load_dataset(filename_real_data, filename_permuted_data_training, filename_p
         print("ERROR: n_features are different between training and validation sets! Exiting...\n")
         sys.exit(1)
 
-    if normalization == 'True':
+    if normalization == 'yes':
         # standardize coefficients
         validation_df = standardize_coefficients(validation_df, n_samples_validation)
 

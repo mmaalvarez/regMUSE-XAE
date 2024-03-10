@@ -6,7 +6,7 @@ epochs = Channel.from( [ '1000' ] )
 batch_size = Channel.from( [ '32', '64', '128' ] )
 l1_size = Channel.from( [ '64', '128', '256' ] )
 validation_perc = Channel.from( [ '10', '20', '30' ] )
-normalization = Channel.from( [ 'True', 'False' ] )
+normalization = Channel.from( [ 'yes', 'no' ] )
 
 process run_autoencoder {
 
