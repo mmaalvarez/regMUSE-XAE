@@ -80,10 +80,10 @@ read_tsv("../coefficients_resampling/original_coeff.tsv") %>%
 ### now go with resampled ones
 
 set.seed(1)
-nIters = 1000 # 1 for each epoch in autoencoder training
+nIters = 6000 # 1 for each epoch in autoencoder training
 dir.create("datasets")
 
-for(training_fraction in c(0.7, 0.8, 0.9)){
+for(training_fraction in c(0.7, 0.8, 0.9)){  
 
   outputDir = paste0("datasets/validation_perc_", 100*(1-training_fraction))
   dir.create(outputDir)

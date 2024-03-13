@@ -1,5 +1,6 @@
 library(tidyverse)
 library(data.table)
+library(lsa)
 library(sigminer)
 library(cowplot)
 library(ggrepel)
@@ -12,6 +13,7 @@ conflict_prefer("select", "dplyr")
 conflict_prefer("map", "purrr")
 conflict_prefer("extract", "magrittr")
 conflict_prefer("Position", "ggplot2")
+conflict_prefer("cosine", "lsa")
 
 
 ##### samples info
@@ -78,6 +80,7 @@ samples_info = bind_rows(K562, iPSC) %>%
 dir.create("plots")
 
 ###########
+
 ## plot all parameter configurations' losses info
 all_best_model_losses_epoch = read_tsv("res/all_best_model_losses_epoch.tsv") %>% 
   separate(output_folder_name,
@@ -88,52 +91,154 @@ all_best_model_losses_epoch = read_tsv("res/all_best_model_losses_epoch.tsv") %>
                 ~as.numeric(.))) %>% 
   mutate(across(matches(c('nFeatures','nSignatures','nEpochs','batchSize','l1Size','validationPerc')),
                 ~factor(., levels = sort(unique(.)))),
-         `Validation / training loss` = best_model_validation_loss / best_model_training_loss) %>% 
+         `Validation loss` = best_model_validation_loss
+         #`Validation / training loss` = best_model_validation_loss / best_model_training_loss
+         ) %>% 
   pivot_longer(cols = contains('best_model_'),
                names_to = 'model', values_to = 'loss') %>% 
   mutate(model = gsub("best_model_|_loss", "", model)) %>% 
-  ## get mean loss, "Validation / training loss", and min_val_loss_epoch for same-parameter (except seed) runs, if they exist
+  ## get mean loss, Validation loss, "Validation / training loss", and min_val_loss_epoch for same-parameter (except seed) runs, if they exist
   group_by(nFeatures,nSignatures,nEpochs,batchSize,l1Size,validationPerc,normalization,model) %>% 
-  summarise_at(vars(min_val_loss_epoch, `Validation / training loss`, loss),
+  summarise_at(vars(min_val_loss_epoch, `Validation loss`, loss),
                ~mean(.)) %>% 
   ungroup
   
-all_best_model_losses_epoch_plot = ggplot(all_best_model_losses_epoch,
-                                          aes(x = model,
-                                              y = loss,
-                                              col = `Validation / training loss`)) +
+N_epochs = unique(all_best_model_losses_epoch$nEpochs)
+
+## split plot for normalization yes/no, as the scale of loss is different since the normalized data has a wider range
+for(normalized in c("yes", "no")){
+  all_best_model_losses_epoch_plot = ggplot(all_best_model_losses_epoch %>% 
+                                              filter(normalization==normalized),
+                                            aes(x = model,
+                                                y = loss,
+                                                col = `Validation loss`)) +
+    geom_col(aes(fill = model),
+             linewidth = 1) +
+    scale_y_continuous(labels = scales::label_number(accuracy = 0.1)) +
+    scale_fill_manual(values = c("black", "lightgray")) +
+    coord_flip() +
+    geom_tile() +
+    scale_color_gradient(low = "blue", high = "red") +
+    geom_label(data = all_best_model_losses_epoch %>% 
+                        filter(normalization==normalized) %>% 
+                        filter(model == "training"),
+               aes(label = min_val_loss_epoch),
+               fill = "white",
+               col = "black",
+               size = 2,
+               nudge_y = quantile(all_best_model_losses_epoch %>% 
+                                    filter(normalization==normalized) %>% 
+                                    pull(loss))[[1]],
+               label.padding = unit(0.01, "lines"),
+               label.size = 0) +
+    ggh4x::facet_nested(rows = vars(nSignatures, batchSize),
+                        cols = vars(normalization, validationPerc, l1Size),
+                        labeller = label_both) +
+    xlab("") +
+    ylab(paste0("Best model's training vs. validation losses for ",unique(all_best_model_losses_epoch$nFeatures)," features and ",N_epochs," epochs -- Epoch of min. validation loss indicated")) +
+    theme_classic() +
+    theme(text = element_text(size = 7),
+          axis.text.y = element_blank(),
+          axis.line.y = element_blank(),
+          axis.ticks.y = element_blank(),
+          legend.position = "top")
+  ggsave(paste0("plots/all_best_model_losses_",N_epochs,"epochs_normalization_", normalized, ".jpg"),
+         plot = all_best_model_losses_epoch_plot,
+         device = "jpg",
+         width = 16,
+         height = 9,
+         dpi = 600)
+}
+
+### compare nepochs, nsignatures, and validation %
+nepochs_nsig_valperc = ggplot(all_best_model_losses_epoch %>% 
+                                filter(normalization=="no" &
+                                       batchSize == 64 &
+                                       l1Size == 128),
+                              aes(x = model,
+                                  y = loss)) +
   geom_col(aes(fill = model),
            linewidth = 1) +
   scale_fill_manual(values = c("black", "lightgray")) +
-  coord_flip() +
-  geom_tile() +
-  scale_color_gradient2(low = "red", 
-                        mid = "blue",
-                        high = "red",
-                        midpoint = 1) +
-  geom_label(aes(label = min_val_loss_epoch),
+  geom_label(data = all_best_model_losses_epoch %>% 
+               filter(normalization=="no" &
+                        batchSize == 64 &
+                        l1Size == 128 &
+                        model == "training"),
+             aes(label = min_val_loss_epoch),
              fill = "white",
              col = "black",
-             size = 2,
-             nudge_y = 0,
+             size = 3,
+             nudge_y = -0.13,
+             nudge_x = 0.5,
              label.padding = unit(0.01, "lines"),
              label.size = 0) +
-  ggh4x::facet_nested(rows = vars(nSignatures, batchSize),
-                      cols = vars(normalization, validationPerc, l1Size),
-                      labeller = label_both) +
-  xlab("") +
-  ylab(paste0("Best model's training vs. validation losses for ",unique(all_best_model_losses_epoch$nFeatures)," features and ",unique(all_best_model_losses_epoch$nEpochs)," epochs -- Epoch of min. validation loss indicated")) +
-  theme_classic() +
-  theme(text = element_text(size = 7),
-        axis.text.y = element_blank(),
-        axis.ticks.y = element_blank(),
-        legend.position = "top")
-ggsave("plots/all_best_model_losses_epoch.jpg",
-       plot = all_best_model_losses_epoch_plot,
+  ggh4x::facet_nested(cols = vars(nSignatures),
+                      rows = vars(nEpochs, validationPerc),
+                      switch = "x") +
+    ylab("Loss") +
+    scale_y_continuous(sec.axis = sec_axis(~., name = "N epochs\n% samples used for validation", breaks = NULL, labels = NULL)) +
+    xlab("K signatures") +
+    ggtitle(paste0("Epoch of model with lowest validation loss -- ", unique(all_best_model_losses_epoch$nFeatures)," features, input coefficients not normalized, batch size = ", 64, ", 1st encoder layer size = ", 128, " neurons")) +
+    theme_bw() +
+    theme(text = element_text(size = 10), 
+          axis.text.x = element_blank(),
+          axis.line.x = element_blank(),
+          axis.ticks.x = element_blank(),
+          legend.position = "right",
+          strip.background = element_blank(),
+          legend.title = element_blank(),
+          plot.title = element_text(hjust = 0.5))
+ggsave(paste0("plots/compare_nepochs_nsig_valperc_.jpg"),
+       plot = nepochs_nsig_valperc,
        device = "jpg",
        width = 16,
        height = 9,
        dpi = 600)
+
+
+## focus on a promising set of parameters
+best_parameters_plot = ggplot(all_best_model_losses_epoch %>% 
+                                            filter(validationPerc == 10),
+                                          aes(x = model,
+                                              y = loss)) +
+  geom_col(aes(fill = model),
+           linewidth = 1) +
+  scale_fill_manual(values = c("black", "lightgray")) +
+  geom_label(data = all_best_model_losses_epoch %>% 
+               filter(normalization=="no" &
+                        batchSize == 64 &
+                        validationPerc == 10 &
+                        l1Size == 128 &
+                        filter(model == "training")),
+             aes(label = min_val_loss_epoch),
+             fill = "white",
+             col = "black",
+             size = 4,
+             nudge_y = 0.01,
+             nudge_x = 0.5,
+             label.padding = unit(0.01, "lines"),
+             label.size = 0) +
+  facet_wrap(facets = vars(nSignatures),
+             nrow = 1,
+             strip.position = "bottom") +
+  ylab("Loss") +
+  xlab("K signatures") +
+  ggtitle(paste0("Best model's training vs. validation losses for ",unique(all_best_model_losses_epoch$nFeatures)," features and ",N_epochs," epochs -- Epoch of min. validation loss indicated\nInput coefficients not normalized, batch size = ", 64, ", validation set = ", 10, "%, 1st encoder layer size = ", 128, " neurons")) +
+  theme_classic() +
+  theme(text = element_text(size = 10), 
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        legend.position = "right",
+        strip.background = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+ggsave(paste0("plots/best_parameters_",N_epochs,"epochs.jpg"),
+       plot = best_parameters_plot,
+       device = "jpg",
+       width = 16,
+       height = 9,
+       dpi = 600)
+
 
 
 ####
@@ -176,6 +281,11 @@ trinuc_96 = c("A(C>A)A", "A(C>A)C", "A(C>A)G", "A(C>A)T",
 # reversed because they go in y axis
 rev_trinuc_96 = rev(trinuc_96)
 
+cosineSimil <- function(x) {
+  mat = t(lsa::cosine(t(x)))
+  return(mat)
+}
+
 sample_pheno_levels = unique(samples_info$altered_pathway_or_treatment_type)
 jet_colors = colorRampPalette(c("gray", "red", "yellow", "green", "cyan", "blue", "magenta", "black"))
 ## if you want a fixed assignment (i.e. that is constant across plots) of a given color to a given sample's source × dMMR status:
@@ -185,85 +295,70 @@ names(fixed_jet_colors) = sample_pheno_levels
 
 ## create plots
 
+# load exposures and weights for given set of parameters (for all values of k)
+exposures_list = lapply(Sys.glob("res/nFeatures_142__nSignatures_*__nEpochs_",N_epochs,"__batchSize_64__l1Size_128__validationPerc_10__normalization_no__seed_*/signature_exposures.tsv"),
+                        read_tsv) %>% 
+  setNames(sapply(., function(x) paste0("K",ncol(x) - 1)))
+weights_list = lapply(Sys.glob("res/nFeatures_142__nSignatures_*__nEpochs_",N_epochs,"__batchSize_64__l1Size_128__validationPerc_10__normalization_no__seed_*/signature_weights.tsv"),
+                      read_tsv) %>% 
+  setNames(sapply(., function(x) paste0("K",ncol(x) - 1)))
+
 # define combinations of nFact and k that we want to plot
-maxK = 12
-range_nFact = seq(2, maxK)
-range_k = seq(2, maxK)
-optimal_nFact_k_list = expand.grid(range_nFact, # nFact
-                                   range_k) %>% # K
-  as.matrix %>% t %>% data.frame %>% as.list
+maxK = 22
+range_k = paste0("K", seq(13, maxK))
 
-for(optimal_nFact_k in optimal_nFact_k_list){
+for(optimal_k in range_k){
   
-  ## extract K signatures (i.e, each cluster's medoid) for the desired combination of the number of NMF factors (nFact) (×1000 resampled matrices) and number of clusters (k)
-  nFact = optimal_nFact_k[1]
-  optimal_k = optimal_nFact_k[2] # the final number of signatures 
-  
-  wMatHere = nmfWmatAllByFact[[sprintf("nFact=%03d", nFact)]]
-  hMatHere = nmfHmatAllByFact[[sprintf("nFact=%03d", nFact)]] # the NMF w-matrices had been transposed, so rows in the H-matrices and in the W-matrices are the same
-
-  rownames(wMatHere) = gsub("run", "Run ", rownames(wMatHere))
-  rownames(wMatHere) = gsub("fact0", "", rownames(wMatHere))
-  rownames(wMatHere) = gsub("fact", "", rownames(wMatHere))
-  rownames(wMatHere) = gsub("_", "\nFactor ", rownames(wMatHere))
-  rownames(hMatHere) = gsub("run", "Run ", rownames(hMatHere))
-  rownames(hMatHere) = gsub("fact0", "", rownames(hMatHere))
-  rownames(hMatHere) = gsub("fact", "", rownames(hMatHere))
-  rownames(hMatHere) = gsub("_", "\nFactor ", rownames(hMatHere))
-
-  # get sample exposures for these cluster medoids (signatures)
-  sample_exposures = wMatHere %>%
-    as_tibble() %>%
-    mutate(signature = rownames(wMatHere)) %>%
-    filter(signature %in% signatures_sorted) %>%
-    arrange(signature) %>% relocate(signature)
-
+  ## parse sample exposures for these k signatures
+  exposures = exposures_list[[optimal_k]] %>%
+    pivot_longer(cols = contains("ae"), names_to = "Signature", values_to = "Exposure") %>%
+    mutate(Signature = factor(Signature, levels = paste0("ae", seq(0, as.numeric(gsub("K", "", optimal_k))-1)))) %>% 
+    arrange(Signature) %>% 
+    relocate(Signature) %>% 
+    # add metadata info (e.g. treatments, MSI, HR, smoking...)
+    left_join(samples_info) %>%
+    filter(!is.na(Exposure))
 
   ## parse signature weights
 
   # SBS weights in signatures
-  weights = signatures_combined_pos_negcoeff %>%
-    as_tibble() %>%
-    mutate(Signature = rownames(signatures_combined_pos_negcoeff)) %>%
-    left_join(signature_stabilities) %>%
-    pivot_longer(cols = !contains("Signature") & !contains('Stability'), names_to = "feature", values_to = "Weight") %>%
-    mutate(feature_group = ifelse(str_detect(feature, ">"),
+  weights = weights_list[[optimal_k]] %>%
+    pivot_longer(cols = contains("ae"), names_to = "Signature", values_to = "Weight") %>%
+    mutate(Signature = factor(Signature, levels = paste0("ae", seq(0, as.numeric(gsub("K", "", optimal_k))-1)))) %>% 
+    arrange(Signature) %>% 
+    relocate(Signature) %>% 
+    mutate(feature_group = ifelse(str_detect(Feature, ">"),
                                   "SBS",
                                   "Regional\nfeature"),
            `SBS group` = ifelse(feature_group == "SBS",
-                                gsub("^.\\(|\\).$", "", feature),
+                                gsub("^.\\(|\\).$", "", Feature),
                                 NA),
            `SBS group` = factor(`SBS group`,
                                 levels = c("C>A", "C>G", "C>T", "T>A", "T>C", "T>G"),
                                 ordered = T),
            SBS96 = ifelse(feature_group == "SBS",
-                          feature,
+                          Feature,
                           NA),
            SBS96 = factor(SBS96,
                           levels = rev_trinuc_96,
                           ordered = T),
            `Regional\nfeature` = ifelse(feature_group == "Regional\nfeature",
-                                         feature,
-                                         NA),
-           # convert signature's stabilities into a factor to be used in y axis, instead of Signature's name which is already indicated in exposures heatmap's y axis
-           Stability = as.character(Stability),
-           Stability = factor(Stability,
-                              levels = unique(signature_stabilities_sorted))) %>%
-    arrange(SBS96, `Regional\nfeature`, Stability)
+                                         Feature,
+                                         NA)) %>%
+    arrange(SBS96, `Regional\nfeature`)
 
   ### sigprofiler (for SBS)
   n_top_similar_cosmic = 3
   cosmic_sig_similarity = weights %>%
     filter(feature_group == "SBS") %>%
-    select(-c(feature, feature_group, `SBS group`, `Regional\nfeature`, Stability)) %>%
+    select(-c(Feature, feature_group, `SBS group`, `Regional\nfeature`)) %>%
     mutate(SBS96 = gsub("\\(", "\\[", SBS96),
            SBS96 = gsub("\\)", "\\]", SBS96),
            SBS96 = factor(SBS96,
                           levels = gsub("\\)", "\\]", gsub("\\(", "\\[", trinuc_96)),
                           ordered = T),
            # neg. weights to 0
-           Weight = ifelse(Weight<0, 0, Weight),
-           Signature = gsub("\n", "_", Signature)) %>%
+           Weight = ifelse(Weight<0, 0, Weight)) %>%
     # each signature's weights have to sum 1
     group_by(Signature) %>%
     mutate(sumWeight = sum(Weight)) %>%
@@ -279,7 +374,7 @@ for(optimal_nFact_k in optimal_nFact_k_list){
     pluck("similarity") %>%
     data.frame %>%
     rownames_to_column("Signature") %>%
-    mutate(Signature = gsub("_", "\n", Signature)) %>%
+    mutate(Signature = factor(Signature, levels = paste0("ae", seq(0, as.numeric(gsub("K", "", optimal_k))-1)))) %>% 
     pivot_longer(cols = !contains("Signature"), names_to = "COSMIC", values_to = "Similarity") %>%
     # keep top similarity cosmic sbs for each signature
     group_by(Signature) %>%
@@ -299,9 +394,8 @@ for(optimal_nFact_k in optimal_nFact_k_list){
   ### 1) SBS96 
   SBS96_sig_similarities = weights %>%
     filter(feature_group == "SBS") %>%
-    select(-c(feature_group, `Regional\nfeature`, `SBS group`, SBS96, Stability, `Max. sim. COSMIC`)) %>%
-    mutate(Signature = gsub("\n", "_", Signature)) %>%
-    pivot_wider(names_from = feature, values_from = Weight) %>%
+    select(-c(feature_group, `Regional\nfeature`, `SBS group`, SBS96, `Max. sim. COSMIC`)) %>%
+    pivot_wider(names_from = Feature, values_from = Weight) %>%
     arrange(Signature) %>%
     column_to_rownames("Signature") %>%
     as.matrix() %>%
@@ -313,7 +407,7 @@ for(optimal_nFact_k in optimal_nFact_k_list){
   
   # bring the data.frame into a from easily usable by ggplot
   SBS96_sig_similarities_clustered = ggdendroplot::hmReady(-SBS96_sig_similarities,
-                                                              colclus=colclus, rowclus=rowclus) %>%
+                                                           colclus=colclus, rowclus=rowclus) %>%
     rename("cosine similarity" = "value",
            "SigA" = "rowid",
            "SigB" = "variable") %>%
@@ -343,7 +437,7 @@ for(optimal_nFact_k in optimal_nFact_k_list){
           axis.text.x = element_text(angle = 45, hjust = 1),
           legend.position = "top",
           legend.text = element_text(angle = 90, vjust = 0.5, hjust = 0.25))
-  ggsave(paste0("plots/cos_sim_deltas/SBS96_weights_similarities_btw_sigs__nFact", nFact, "_K", optimal_k, ".jpeg"),
+  ggsave(paste0("plots/cos_sim_deltas/nEpochs",N_epochs,"_SBS96_weights_similarities_btw_sigs__", optimal_k, ".jpeg"),
          plot = heatmap_SBS96_sig_similarities,
          device = "jpeg",
          width = 25,
@@ -353,9 +447,9 @@ for(optimal_nFact_k in optimal_nFact_k_list){
   ### 2) regional features
   reg_feat_sig_similarities = weights %>%
     filter(feature_group != "SBS") %>%
-    select(-c(feature_group, `Regional\nfeature`, `SBS group`, SBS96, Stability, `Max. sim. COSMIC`)) %>%
+    select(-c(feature_group, `Regional\nfeature`, `SBS group`, SBS96, `Max. sim. COSMIC`)) %>%
     mutate(Signature = gsub("\n", "_", Signature)) %>%
-    pivot_wider(names_from = feature, values_from = Weight) %>%
+    pivot_wider(names_from = Feature, values_from = Weight) %>%
     arrange(Signature) %>%
     column_to_rownames("Signature") %>%
     as.matrix() %>%
@@ -397,7 +491,7 @@ for(optimal_nFact_k in optimal_nFact_k_list){
           axis.text.x = element_text(angle = 45, hjust = 1),
           legend.position = "top",
           legend.text = element_text(angle = 90, vjust = 0.5, hjust = 0.25))
-  ggsave(paste0("plots/cos_sim_deltas/RegFeat_weights_similarities_btw_sigs__nFact", nFact, "_K", optimal_k, ".jpeg"),
+  ggsave(paste0("plots/cos_sim_deltas/nEpochs",N_epochs,"RegFeat_weights_similarities_btw_sigs__", optimal_k, ".jpeg"),
          plot = heatmap_reg_feat_sig_similarities,
          device = "jpeg",
          width = 25,
@@ -456,117 +550,116 @@ for(optimal_nFact_k in optimal_nFact_k_list){
           axis.text.x = element_text(angle = 45, hjust = 1),
           legend.position = "top",
           legend.text = element_text(angle = 90, vjust = 0.5, hjust = 0.25))
-  ggsave(paste0("plots/cos_sim_deltas/delta_cos_simil__nFact", nFact, "_K", optimal_k, ".jpeg"),
+  ggsave(paste0("plots/cos_sim_deltas/nEpochs",N_epochs,"_delta_cos_simil__", optimal_k, ".jpeg"),
          plot = heatmap_delta_cos_simil,
          device = "jpeg",
          width = 25,
          height = 14,
          dpi = 600)
   
-  ### 4) bootstrap: shuffle cosine similarities matrix of SBS96 to create a null distribution of deltas to which compare the real deltas for significance
-  bootstrap_n = 1000
-  bootstrapped_deltas = list()
-
-  for(i in seq(1,bootstrap_n)){
-
-    SBS96_sig_similarities_clustered_shuffled = SBS96_sig_similarities_clustered %>%
-      mutate(SigB = as.character(SigB)) %>%
-      # remove SigA==SigB
-      filter(SigA != SigB) %>%
-      as_tibble %>%
-      # remove rows where row1$SigA == row2$SigB && row1$SigB == row2$SigA
-      mutate(pair_id = pmap_chr(list(SigA, SigB), ~paste(sort(c(...)), collapse = "__"))) %>%
-      distinct(pair_id, .keep_all = TRUE) %>%
-      select(-pair_id) %>%  # remove the auxiliary column
-      transform(`cosine similarity` = sample(`cosine similarity`)) %>%
-      rename("cosine similarity" = "cosine.similarity")
-
-    reg_feat_sig_similarities_clustered_shuffled = reg_feat_sig_similarities_clustered %>%
-      mutate(SigB = as.character(SigB)) %>%
-      # remove SigA==SigB here as well
-      filter(SigA != SigB) %>%
-      as_tibble %>%
-      # remove rows where row1$SigA == row2$SigB && row1$SigB == row2$SigA here as well
-      mutate(pair_id = pmap_chr(list(SigA, SigB), ~paste(sort(c(...)), collapse = "__"))) %>%
-      distinct(pair_id, .keep_all = TRUE) %>%
-      select(-pair_id) %>%  # remove the auxiliary column
-      # it's not actually necessary to sample this matrix as well, but anyways
-      transform(`cosine similarity` = sample(`cosine similarity`)) %>%
-      rename("cosine similarity" = "cosine.similarity")
-
-    bootstrap_delta_cos_simil = bind_rows(SBS96_sig_similarities_clustered_shuffled,
-                                          reg_feat_sig_similarities_clustered_shuffled) %>%
-      select(-c(x,y)) %>%
-      unite("Sigpair", SigA, SigB, sep = "__") %>%
-      pivot_wider(names_from = feature_type, values_from = `cosine similarity`) %>%
-      group_by(Sigpair) %>%
-      ## regfeat - SBS96 (the more negative, the more dissimilar the signatures in regfeat compared to how similar they are in SBS96)
-      summarise("Δ cosine similarity" = `Regional features` - SBS96) %>%
-      separate(Sigpair, into = c("SigA", "SigB"), sep = "__")
-
-    bootstrapped_deltas[[i]] = select(bootstrap_delta_cos_simil,
-                                      `Δ cosine similarity`)
-  }
-  bootstrapped_deltas = bind_rows(bootstrapped_deltas) %>%
-    mutate(Sigpair = "Bootstrap")
-
-  # to standardize delta
-  mean_delta = mean(bootstrapped_deltas$`Δ cosine similarity`)
-  sd_delta = sd(bootstrapped_deltas$`Δ cosine similarity`)
-
-  real_deltas_vs_bootstrap = delta_cos_simil_real %>%
-    # remove SigA==SigB
-    filter(SigA != SigB) %>%
-    # remove rows where row1$SigA == row2$SigB && row1$SigB == row2$SigA
-    mutate(pair_id = pmap_chr(list(SigA, SigB), ~paste(sort(c(...)), collapse = "__"))) %>%
-    distinct(pair_id, .keep_all = TRUE) %>%
-    select(-pair_id) %>%  # remove the auxiliary column
-    unite("Sigpair", SigA, SigB, sep = " vs. ") %>%
-    bind_rows(bootstrapped_deltas) %>%
-    mutate(group = ifelse(Sigpair == "Bootstrap",
-                          "Bootstrap",
-                          "Real"),
-           `Δ cosine similarity (standardized)` = (`Δ cosine similarity`-mean_delta) / sd_delta)
-
-  real_deltas_vs_bootstrap_hits[[paste0("nFact", nFact, "_K", optimal_k)]] = real_deltas_vs_bootstrap %>%
-    filter(group == "Real" & `Δ cosine similarity (standardized)` <= -1.96) %>%
-    mutate("nFact" = nFact,
-           "K" = optimal_k) %>%
-    select(-group)
-
-  plot_real_deltas_vs_bootstrap = ggplot(real_deltas_vs_bootstrap,
-                                         aes(x = `Δ cosine similarity (standardized)`,
-                                             col = group,
-                                             fill = group)) +
-    scale_x_continuous(breaks = seq(-3, 3, 0.5)) +
-    geom_density(data = real_deltas_vs_bootstrap %>%
-                          filter(group == "Bootstrap")) +
-    geom_bar(data = real_deltas_vs_bootstrap %>%
-               filter(group == "Real")) +
-    scale_color_manual(values = c("red", "blue")) +
-    scale_fill_manual(values = c("red", "blue")) +
-    geom_text(data = real_deltas_vs_bootstrap %>%
-                filter(group == "Real" & `Δ cosine similarity (standardized)` <= -1.96),
-              aes(label = Sigpair,
-                  y = 0),
-              angle=90,
-              vjust = -0.1,
-              hjust = -0.1) +
-    theme_bw() +
-    xlab("Absolute difference of the signature cosine similarities in regional features vs. in SBS96 (standardized)") +
-    ylab("Density (bootstrap, red) or counts (real, blue)") +
-    theme(legend.title = element_blank())
-  ggsave(paste0("plots/cos_sim_deltas/deltas_real_vs_bootstrap", nFact, "_K", optimal_k, ".jpeg"),
-         plot = plot_real_deltas_vs_bootstrap,
-         device = "jpeg",
-         width = 13,
-         height = 7,
-         dpi = 600)
+  # ### 4) bootstrap: shuffle cosine similarities matrix of SBS96 to create a null distribution of deltas to which compare the real deltas for significance
+  # bootstrap_n = 1000
+  # bootstrapped_deltas = list()
+  # 
+  # for(i in seq(1,bootstrap_n)){
+  # 
+  #   SBS96_sig_similarities_clustered_shuffled = SBS96_sig_similarities_clustered %>%
+  #     mutate(SigB = as.character(SigB)) %>%
+  #     # remove SigA==SigB
+  #     filter(SigA != SigB) %>%
+  #     as_tibble %>%
+  #     # remove rows where row1$SigA == row2$SigB && row1$SigB == row2$SigA
+  #     mutate(pair_id = pmap_chr(list(SigA, SigB), ~paste(sort(c(...)), collapse = "__"))) %>%
+  #     distinct(pair_id, .keep_all = TRUE) %>%
+  #     select(-pair_id) %>%  # remove the auxiliary column
+  #     transform(`cosine similarity` = sample(`cosine similarity`)) %>%
+  #     rename("cosine similarity" = "cosine.similarity")
+  # 
+  #   reg_feat_sig_similarities_clustered_shuffled = reg_feat_sig_similarities_clustered %>%
+  #     mutate(SigB = as.character(SigB)) %>%
+  #     # remove SigA==SigB here as well
+  #     filter(SigA != SigB) %>%
+  #     as_tibble %>%
+  #     # remove rows where row1$SigA == row2$SigB && row1$SigB == row2$SigA here as well
+  #     mutate(pair_id = pmap_chr(list(SigA, SigB), ~paste(sort(c(...)), collapse = "__"))) %>%
+  #     distinct(pair_id, .keep_all = TRUE) %>%
+  #     select(-pair_id) %>%  # remove the auxiliary column
+  #     # it's not actually necessary to sample this matrix as well, but anyways
+  #     transform(`cosine similarity` = sample(`cosine similarity`)) %>%
+  #     rename("cosine similarity" = "cosine.similarity")
+  # 
+  #   bootstrap_delta_cos_simil = bind_rows(SBS96_sig_similarities_clustered_shuffled,
+  #                                         reg_feat_sig_similarities_clustered_shuffled) %>%
+  #     select(-c(x,y)) %>%
+  #     unite("Sigpair", SigA, SigB, sep = "__") %>%
+  #     pivot_wider(names_from = feature_type, values_from = `cosine similarity`) %>%
+  #     group_by(Sigpair) %>%
+  #     ## regfeat - SBS96 (the more negative, the more dissimilar the signatures in regfeat compared to how similar they are in SBS96)
+  #     summarise("Δ cosine similarity" = `Regional features` - SBS96) %>%
+  #     separate(Sigpair, into = c("SigA", "SigB"), sep = "__")
+  # 
+  #   bootstrapped_deltas[[i]] = select(bootstrap_delta_cos_simil,
+  #                                     `Δ cosine similarity`)
+  # }
+  # bootstrapped_deltas = bind_rows(bootstrapped_deltas) %>%
+  #   mutate(Sigpair = "Bootstrap")
+  # 
+  # # to standardize delta
+  # mean_delta = mean(bootstrapped_deltas$`Δ cosine similarity`)
+  # sd_delta = sd(bootstrapped_deltas$`Δ cosine similarity`)
+  # 
+  # real_deltas_vs_bootstrap = delta_cos_simil_real %>%
+  #   # remove SigA==SigB
+  #   filter(SigA != SigB) %>%
+  #   # remove rows where row1$SigA == row2$SigB && row1$SigB == row2$SigA
+  #   mutate(pair_id = pmap_chr(list(SigA, SigB), ~paste(sort(c(...)), collapse = "__"))) %>%
+  #   distinct(pair_id, .keep_all = TRUE) %>%
+  #   select(-pair_id) %>%  # remove the auxiliary column
+  #   unite("Sigpair", SigA, SigB, sep = " vs. ") %>%
+  #   bind_rows(bootstrapped_deltas) %>%
+  #   mutate(group = ifelse(Sigpair == "Bootstrap",
+  #                         "Bootstrap",
+  #                         "Real"),
+  #          `Δ cosine similarity (standardized)` = (`Δ cosine similarity`-mean_delta) / sd_delta)
+  # 
+  # real_deltas_vs_bootstrap_hits[[paste0("nFact", nFact, "_", optimal_k)]] = real_deltas_vs_bootstrap %>%
+  #   filter(group == "Real" & `Δ cosine similarity (standardized)` <= -1.96) %>%
+  #   mutate("nFact" = nFact,
+  #          "K" = optimal_k) %>%
+  #   select(-group)
+  # 
+  # plot_real_deltas_vs_bootstrap = ggplot(real_deltas_vs_bootstrap,
+  #                                        aes(x = `Δ cosine similarity (standardized)`,
+  #                                            col = group,
+  #                                            fill = group)) +
+  #   scale_x_continuous(breaks = seq(-3, 3, 0.5)) +
+  #   geom_density(data = real_deltas_vs_bootstrap %>%
+  #                         filter(group == "Bootstrap")) +
+  #   geom_bar(data = real_deltas_vs_bootstrap %>%
+  #              filter(group == "Real")) +
+  #   scale_color_manual(values = c("red", "blue")) +
+  #   scale_fill_manual(values = c("red", "blue")) +
+  #   geom_text(data = real_deltas_vs_bootstrap %>%
+  #               filter(group == "Real" & `Δ cosine similarity (standardized)` <= -1.96),
+  #             aes(label = Sigpair,
+  #                 y = 0),
+  #             angle=90,
+  #             vjust = -0.1,
+  #             hjust = -0.1) +
+  #   theme_bw() +
+  #   xlab("Absolute difference of the signature cosine similarities in regional features vs. in SBS96 (standardized)") +
+  #   ylab("Density (bootstrap, red) or counts (real, blue)") +
+  #   theme(legend.title = element_blank())
+  # ggsave(paste0("plots/cos_sim_deltas/nEpochs",N_epochs,"_deltas_real_vs_bootstrap__", optimal_k, ".jpeg"),
+  #        plot = plot_real_deltas_vs_bootstrap,
+  #        device = "jpeg",
+  #        width = 13,
+  #        height = 7,
+  #        dpi = 600)
   
   
   ##### 5) detect relationships between regional feature(s) and cosmic SBS
   cosmic_sim_good = weights %>% 
-    filter(as.numeric(Stability) >= stability_cutoff) %>% 
     select(Signature, `Max. sim. COSMIC`) %>% 
     distinct %>% 
     mutate(Signature = gsub("\n", " ", Signature),
@@ -617,34 +710,33 @@ for(optimal_nFact_k in optimal_nFact_k_list){
           mutate(Signature = gsub("\n", " ", Signature),
                  is.hit = ifelse(Signature %in% c(SigA, SigB),
                                  "hit", "no hit")) %>% 
-          select(Signature, feature, Weight, is.hit) %>% 
+          select(Signature, Feature, Weight, is.hit) %>% 
           group_by(Signature) %>%
           arrange(desc(abs(Weight))) %>% 
           slice_head(n = max_n_feature_hits) %>% 
           ungroup %>% 
-          select(Signature, feature, is.hit) %>% 
+          select(Signature, Feature, is.hit) %>% 
           distinct
         
-        top5_in_hit_signatures = weights_sigpair %>% filter(is.hit=="hit") %>% select(feature) %>% pull
+        top5_in_hit_signatures = weights_sigpair %>% filter(is.hit=="hit") %>% select(Feature) %>% pull
         top5_in_hit_signatures = unique(top5_in_hit_signatures[duplicated(top5_in_hit_signatures)])
-        top5_in_nohit_signatures = weights_sigpair %>% filter(is.hit=="no hit") %>% select(feature) %>% pull %>% unique
+        top5_in_nohit_signatures = weights_sigpair %>% filter(is.hit=="no hit") %>% select(Feature) %>% pull %>% unique
         
         feature_hits = top5_in_hit_signatures[!top5_in_hit_signatures %in% top5_in_nohit_signatures]
         
         if(length(feature_hits) >=1){
           
           regfeats_cosmic_assoc_table = weights_sigpair %>% 
-            filter(feature %in% feature_hits) %>%         
+            filter(Feature %in% feature_hits) %>%         
             left_join(mutate(weights, Signature = gsub("\n", " ", Signature))) %>% 
-            select(Signature, Stability, feature, Weight, `Max. sim. COSMIC`) %>% 
-            mutate("nFact" = nFact,
-                   "K" = optimal_k,
+            select(Signature, Feature, Weight, `Max. sim. COSMIC`) %>% 
+            mutate("K" = optimal_k,
                    Sigpair_i = sigpair)
           
           # only record it IF the cosmic signature that is most common to the SBS component is the same for both signatures
           if(length(unique(gsub(": .*", "", regfeats_cosmic_assoc_table$`Max. sim. COSMIC`))) == 1){
           
-            regfeats_cosmic_assoc[[paste0("nFact", nFact, "_K", optimal_k)]] = regfeats_cosmic_assoc_table
+            regfeats_cosmic_assoc[[optimal_k]] = regfeats_cosmic_assoc_table
           }
         }
       }
@@ -653,27 +745,14 @@ for(optimal_nFact_k in optimal_nFact_k_list){
   
   
   ###################################################################################################
-  
-  
-  #### parse signature exposures in samples
-  exposures = sample_exposures %>%
-    pivot_longer(cols = !contains("signature") & !(contains("Stability")), names_to = "Sample", values_to = "Exposure") %>%
-    mutate(Sample = gsub("_nIter.*$", "", Sample)) %>%
-    # add metadata info (e.g. treatments, MSI, HR, smoking...)
-    left_join(samples_info) %>%
-    rename("Signature" = "signature") %>%
-    filter(!is.na(Exposure)) %>%
-    mutate(Signature = factor(Signature, levels = signatures_sorted))
 
   ## write it for random forests
-  write_tsv(exposures %>%
-              mutate(Signature = gsub("\n", " ", Signature)),
-            paste0("exposures_weights/fct", nFact, "_", "k", optimal_k, "_exposures.tsv"))
+  write_tsv(exposures,
+            paste0("exposures_weights/nEpochs",N_epochs,"_", optimal_k, "_exposures.tsv"))
   write_tsv(weights %>%
               rename("Chromatin feature" = "Regional\nfeature") %>%
-              mutate(`Chromatin feature` = gsub("\n", "_", `Chromatin feature`),
-                     Signature = gsub("\n", " ", Signature)),
-            paste0("exposures_weights/fct", nFact, "_", "k", optimal_k, "_weights.tsv"))
+              mutate(`Chromatin feature` = gsub("\n", "_", `Chromatin feature`)),
+            paste0("exposures_weights/nEpochs",N_epochs,"_", optimal_k, "_weights.tsv"))
 
 
   ##### plotting
@@ -703,21 +782,9 @@ for(optimal_nFact_k in optimal_nFact_k_list){
 
   ## regional features
 
-  # to label the regfeat plots with their stability instead of the regional feature name
-  stability_labels = weights %>%
-    filter(!is.na(`Regional\nfeature`)) %>%
-    mutate(desc_Stability = factor(Stability, levels = rev(unique(signature_stabilities_sorted)), ordered = T)) %>%
-    select(desc_Stability,Signature) %>%
-    distinct %>%
-    arrange(desc_Stability) %>%
-    mutate(Signature = factor(Signature, levels = .$Signature, ordered = T)) %>%
-    select(Signature, desc_Stability) %>%
-    deframe()
-
    weights_plot_regfeat = ggplot(weights %>%
                                   filter(feature_group != "SBS") %>%
-                                  select(-c(feature, feature_group, contains("SBS"))) %>%
-                                  mutate(desc_Stability = factor(Stability, levels = rev(unique(signature_stabilities_sorted)), ordered = T)),
+                                  select(-c(Feature, feature_group, contains("SBS"))),
                                 aes(x = Weight,
                                     y = `Regional\nfeature`)) +
     scale_x_continuous(expand = c(0, 0),
@@ -729,17 +796,15 @@ for(optimal_nFact_k in optimal_nFact_k_list){
     guides(fill = guide_legend(override.aes = list(size=0.5),
                                ncol = 4)) +
     geom_vline(xintercept = 0, linetype = "dotted", color = "white", linewidth = 1) +
-    facet_wrap(~desc_Stability, ncol = 1, scales = "free",
-               strip.position="right",
-               labeller = as_labeller(stability_labels)) +
+    facet_wrap(~desc(Signature), ncol = 1, scales = "free",
+               strip.position="right") +
     xlab("Contribution (regional features)") +
-    ylab("Signature stability") +
+    ylab("") +
     theme_classic() +
     theme(axis.ticks.y = element_blank(),
           axis.text.y = element_blank(),
           axis.line.y = element_blank(),
           axis.text.x = element_text(size = 10),
-          strip.text.y = element_text(size = 15),
           text = element_text(size = 15),
           strip.background = element_blank(),
           legend.title = element_blank(),
@@ -748,20 +813,18 @@ for(optimal_nFact_k in optimal_nFact_k_list){
 
   ## SBS
 
-  # to label the SBS plots with their COSMIC similarity instead of their stability (which is already in the MMR+BER)
+  # to label the SBS plots with their COSMIC similarity
   max_sim_cosmic = weights %>%
-    mutate(desc_Stability = factor(Stability, levels = rev(unique(signature_stabilities_sorted)), ordered = T)) %>%
-    select(desc_Stability,`Max. sim. COSMIC`) %>%
+    select(Signature,`Max. sim. COSMIC`) %>%
     distinct %>%
-    arrange(desc_Stability) %>%
+    arrange(desc(Signature)) %>%
     mutate(`Max. sim. COSMIC` = as.character(`Max. sim. COSMIC`)) %>%
     deframe()
 
   weights_plot_SBS = ggplot(weights %>%
                               filter(feature_group == "SBS") %>%
-                              select(-c(feature, feature_group, `Regional\nfeature`)) %>%
-                              mutate(desc_Stability = factor(Stability, levels = rev(unique(signature_stabilities_sorted)), ordered = T),
-                                     `Max. sim. COSMIC` = factor(`Max. sim. COSMIC`, levels = as.character(max_sim_cosmic), ordered = T)),
+                              select(-c(Feature, feature_group, `Regional\nfeature`)) %>%
+                              mutate(`Max. sim. COSMIC` = factor(`Max. sim. COSMIC`, levels = as.character(max_sim_cosmic), ordered = T)),
                             aes(x = Weight,
                                 y = SBS96)) +
     scale_x_continuous(expand = c(0, 0),
@@ -772,7 +835,7 @@ for(optimal_nFact_k in optimal_nFact_k_list){
     scale_fill_manual(values = c("#00bfeb", "black", "#f3282f", "#cdc9ca", "#a1cc6b", "#f1c6c5")) +
     guides(fill = guide_legend(override.aes = list(size=1),
                                nrow = 6)) +
-    facet_wrap(~desc_Stability, ncol = 1, scales = "free",
+    facet_wrap(~desc(Signature), ncol = 1, scales = "free",
                strip.position="right",
                labeller = as_labeller(max_sim_cosmic)) +
     geom_vline(xintercept = 0, linetype = "dotted", color = "white", linewidth = 1) +
@@ -786,7 +849,7 @@ for(optimal_nFact_k in optimal_nFact_k_list){
           strip.text.y = element_text(size = 15),
           text = element_text(size = 15),
           strip.background = element_blank(),
-          ## THIS removes the SBS similarity names and values, since we will add pie charts instead
+          ## THIS removes the SBS similarity names and values, since we will add bar charts instead
           strip.text.y.right = element_blank(),
           ## THIS makes the 'top similar cosmic SBS' text flipped
           axis.title.y.right = element_text(angle = 90),
@@ -796,10 +859,9 @@ for(optimal_nFact_k in optimal_nFact_k_list){
   # barplot of SBS cosmic top similarities
   barplot_cosmic = ggplot(weights %>%
            filter(feature_group == "SBS") %>%
-           select(-c(feature, feature_group, `Regional\nfeature`)) %>%
-           mutate(desc_Stability = factor(Stability, levels = rev(unique(signature_stabilities_sorted)), ordered = T),
-                  `Max. sim. COSMIC` = factor(`Max. sim. COSMIC`, levels = as.character(max_sim_cosmic), ordered = T)) %>% 
-           select(desc_Stability, `Max. sim. COSMIC`) %>% 
+           select(-c(Feature, feature_group, `Regional\nfeature`)) %>%
+           mutate(`Max. sim. COSMIC` = factor(`Max. sim. COSMIC`, levels = as.character(max_sim_cosmic), ordered = T)) %>% 
+           select(Signature, `Max. sim. COSMIC`) %>% 
            distinct %>% 
            separate(`Max. sim. COSMIC`, into = c("top-1", "top-2", "top-3"), sep = " / ") %>% 
            pivot_longer(cols = contains("top-"),
@@ -808,13 +870,13 @@ for(optimal_nFact_k in optimal_nFact_k_list){
            separate(`COSMIC name and similarity`, into = c("COSMIC", "cosine similarity"), sep = ": ") %>% 
            select(-`Max. sim. COSMIC`) %>% 
            mutate(`cosine similarity` = as.numeric(`cosine similarity`)) %>% 
-           arrange(desc_Stability, desc(`cosine similarity`)),
+           arrange(desc(Signature), desc(`cosine similarity`)),
          aes(x = COSMIC,
              y = `cosine similarity`)) +
     coord_flip() +
     scale_y_continuous(breaks = c(0, 0.5, 0.75, 1.2)) +
     geom_col() +
-    facet_wrap(~desc_Stability, ncol = 1, scales = "free_y") +
+    facet_wrap(~desc(Signature), ncol = 1, scales = "free_y") +
     theme_classic() +
     xlab("") +
     ylab("cos similarity") +
@@ -834,7 +896,7 @@ for(optimal_nFact_k in optimal_nFact_k_list){
                              NULL,
                              ncol = 9,
                              rel_widths = c(0.02, 1, 0.02, 0.2, 0.01, 0.1, 0.01,0.1, 0.01))
-  ggsave(paste0("plots/regMUSE-XAE_exposures_weights_plot__nFact", nFact, "_K", optimal_k, ".jpeg"),
+  ggsave(paste0("plots/nEpochs",N_epochs,"_exposures_weights_plot__", optimal_k, ".jpeg"),
          plot = combined_plots,
          device = "jpeg",
          width = 25,
@@ -844,8 +906,8 @@ for(optimal_nFact_k in optimal_nFact_k_list){
 
 write_tsv(bind_rows(real_deltas_vs_bootstrap_hits) %>% 
             arrange(`Δ cosine similarity (standardized)`),
-          "plots/cos_sim_deltas/real_deltas_vs_bootstrap_hits.tsv")
+          "plots/cos_sim_deltas/nEpochs",N_epochs,"_real_deltas_vs_bootstrap_hits.tsv")
 
 write_tsv(bind_rows(regfeats_cosmic_assoc) %>% 
-            arrange(nFact, K, Sigpair_i),
-          "plots/cos_sim_deltas/regfeats_cosmic_assoc.tsv")
+            arrange(K, Sigpair_i),
+          "plots/cos_sim_deltas/nEpochs",N_epochs,"_regfeats_cosmic_assoc.tsv")
