@@ -6,6 +6,7 @@ library(cowplot)
 library(ggrepel)
 #devtools::install_github("nicolash2/ggdendroplot")
 library(ggdendroplot)
+library(gtools)
 library(conflicted)
 conflict_prefer("filter", "dplyr")
 conflict_prefer("rename", "dplyr")
@@ -93,7 +94,7 @@ all_best_model_losses_epoch = read_tsv("res/all_best_model_losses_epoch.tsv") %>
                 ~factor(., levels = sort(unique(.)))),
          `Validation loss` = best_model_validation_loss
          #`Validation / training loss` = best_model_validation_loss / best_model_training_loss
-         ) %>% 
+  ) %>% 
   pivot_longer(cols = contains('best_model_'),
                names_to = 'model', values_to = 'loss') %>% 
   mutate(model = gsub("best_model_|_loss", "", model)) %>% 
@@ -102,137 +103,161 @@ all_best_model_losses_epoch = read_tsv("res/all_best_model_losses_epoch.tsv") %>
   summarise_at(vars(min_val_loss_epoch, `Validation loss`, loss),
                ~mean(.)) %>% 
   ungroup
-  
-N_epochs = unique(all_best_model_losses_epoch$nEpochs)
+
 
 ## split plot for normalization yes/no, as the scale of loss is different since the normalized data has a wider range
 for(normalized in c("yes", "no")){
-  all_best_model_losses_epoch_plot = ggplot(all_best_model_losses_epoch %>% 
-                                              filter(normalization==normalized),
-                                            aes(x = model,
-                                                y = loss,
-                                                col = `Validation loss`)) +
+  
+  # N_epochs = 6000
+  # all_best_model_losses_epoch_plot = ggplot(all_best_model_losses_epoch %>% 
+  #                                             filter(normalization==normalized),
+  #                                           aes(x = model,
+  #                                               y = loss,
+  #                                               col = `Validation loss`)) +
+  #   geom_col(aes(fill = model),
+  #            linewidth = 1) +
+  #   scale_y_continuous(labels = scales::label_number(accuracy = 0.1)) +
+  #   scale_fill_manual(values = c("black", "lightgray")) +
+  #   coord_flip() +
+  #   geom_tile() +
+  #   scale_color_gradient(low = "blue", high = "red") +
+  #   geom_label(data = all_best_model_losses_epoch %>% 
+  #                       filter(normalization==normalized) %>% 
+  #                       filter(model == "training"),
+  #              aes(label = min_val_loss_epoch),
+  #              fill = "white",
+  #              col = "black",
+  #              size = 2,
+  #              nudge_y = quantile(all_best_model_losses_epoch %>% 
+  #                                   filter(normalization==normalized) %>% 
+  #                                   pull(loss))[[1]],
+  #              label.padding = unit(0.01, "lines"),
+  #              label.size = 0) +
+  #   ggh4x::facet_nested(rows = vars(nSignatures, batchSize),
+  #                       cols = vars(normalization, validationPerc, l1Size),
+  #                       labeller = label_both) +
+  #   xlab("") +
+  #   ylab(paste0("Best model's training vs. validation losses for ",unique(all_best_model_losses_epoch$nFeatures)," features and ",N_epochs," epochs -- Epoch of min. validation loss indicated")) +
+  #   theme_classic() +
+  #   theme(text = element_text(size = 7),
+  #         axis.text.y = element_blank(),
+  #         axis.line.y = element_blank(),
+  #         axis.ticks.y = element_blank(),
+  #         legend.position = "top")
+  # ggsave(paste0("plots/all_best_model_losses_",N_epochs,"epochs_normalization_", normalized, ".jpg"),
+  #        plot = all_best_model_losses_epoch_plot,
+  #        device = "jpg",
+  #        width = 16,
+  #        height = 9,
+  #        dpi = 600)
+  
+  ### compare nepochs, nsignatures, and validation %
+  nepochs_nsig_valperc = ggplot(all_best_model_losses_epoch %>% 
+                                  filter(normalization==normalized &
+                                           batchSize == 64 &
+                                           l1Size == 128),
+                                aes(x = model,
+                                    y = loss,
+                                    col = `Validation loss`)) +
     geom_col(aes(fill = model),
-             linewidth = 1) +
-    scale_y_continuous(labels = scales::label_number(accuracy = 0.1)) +
+             linewidth = 1.2) +
     scale_fill_manual(values = c("black", "lightgray")) +
-    coord_flip() +
     geom_tile() +
     scale_color_gradient(low = "blue", high = "red") +
+    geom_hline(yintercept = all_best_model_losses_epoch %>% 
+                 filter(normalization==normalized &
+                          batchSize == 64 &
+                          l1Size == 128) %>% 
+                 pull(`Validation loss`) %>% min, 
+               linetype = "dotted", color = "yellow") +
     geom_label(data = all_best_model_losses_epoch %>% 
-                        filter(normalization==normalized) %>% 
-                        filter(model == "training"),
+                 filter(normalization==normalized &
+                          batchSize == 64 &
+                          l1Size == 128 &
+                          model == "training"),
                aes(label = min_val_loss_epoch),
                fill = "white",
                col = "black",
                size = 2,
-               nudge_y = quantile(all_best_model_losses_epoch %>% 
-                                    filter(normalization==normalized) %>% 
-                                    pull(loss))[[1]],
-               label.padding = unit(0.01, "lines"),
+               nudge_y = -0.13,
+               nudge_x = 0.5,
+               label.padding = unit(0.05, "lines"),
                label.size = 0) +
-    ggh4x::facet_nested(rows = vars(nSignatures, batchSize),
-                        cols = vars(normalization, validationPerc, l1Size),
-                        labeller = label_both) +
-    xlab("") +
-    ylab(paste0("Best model's training vs. validation losses for ",unique(all_best_model_losses_epoch$nFeatures)," features and ",N_epochs," epochs -- Epoch of min. validation loss indicated")) +
-    theme_classic() +
-    theme(text = element_text(size = 7),
-          axis.text.y = element_blank(),
-          axis.line.y = element_blank(),
-          axis.ticks.y = element_blank(),
-          legend.position = "top")
-  ggsave(paste0("plots/all_best_model_losses_",N_epochs,"epochs_normalization_", normalized, ".jpg"),
-         plot = all_best_model_losses_epoch_plot,
+    ggh4x::facet_nested(cols = vars(nSignatures),
+                        rows = vars(nEpochs, validationPerc),
+                        switch = "x") +
+    ylab("Loss") +
+    scale_y_continuous(sec.axis = sec_axis(~., name = "N epochs\n% samples used for validation", breaks = NULL, labels = NULL)) +
+    xlab("K signatures") +
+    ggtitle(paste0("Epoch of model with lowest validation loss -- ", unique(all_best_model_losses_epoch$nFeatures)," features, input coefficients normalization: '", normalized, "', batch size: ", 64, ", 1st encoder layer size: ", 128, " neurons")) +
+    theme_bw() +
+    theme(text = element_text(size = 10), 
+          axis.text.x = element_blank(),
+          axis.text.y = element_text(size = 6),
+          panel.grid.minor = element_blank(),
+          axis.line.x = element_blank(),
+          axis.ticks.x = element_blank(),
+          strip.background = element_rect(fill = "white"),
+          legend.position = "right",
+          plot.title = element_text(hjust = 0.5))
+  ggsave(paste0("plots/compare_nepochs_nsig_valperc_normalized_", normalized, ".jpg"),
+         plot = nepochs_nsig_valperc,
          device = "jpg",
          width = 16,
          height = 9,
          dpi = 600)
 }
 
-### compare nepochs, nsignatures, and validation %
-nepochs_nsig_valperc = ggplot(all_best_model_losses_epoch %>% 
-                                filter(normalization=="no" &
-                                       batchSize == 64 &
-                                       l1Size == 128),
+## show signatures for a promising set of parameters
+N_features = unique(all_best_model_losses_epoch$nFeatures)
+N_epochs = 1000
+validation_perc = 10
+normalized = "no"
+batch_size = 64
+l1_size = 128
+
+best_parameters_plot = ggplot(all_best_model_losses_epoch %>% 
+                                filter(nFeatures == N_features &
+                                         nEpochs == N_epochs &
+                                         validationPerc == validation_perc &
+                                         normalization==normalized &
+                                         batchSize == batch_size &
+                                         l1Size == l1_size),
                               aes(x = model,
                                   y = loss)) +
   geom_col(aes(fill = model),
            linewidth = 1) +
   scale_fill_manual(values = c("black", "lightgray")) +
   geom_label(data = all_best_model_losses_epoch %>% 
-               filter(normalization=="no" &
-                        batchSize == 64 &
-                        l1Size == 128 &
+               filter(nFeatures == N_features &
+                        nEpochs == N_epochs &
+                        validationPerc == validation_perc &
+                        normalization==normalized &
+                        batchSize == batch_size &
+                        l1Size == l1_size &
                         model == "training"),
              aes(label = min_val_loss_epoch),
              fill = "white",
              col = "black",
              size = 3,
-             nudge_y = -0.13,
+             nudge_y = -0.1,
              nudge_x = 0.5,
-             label.padding = unit(0.01, "lines"),
-             label.size = 0) +
-  ggh4x::facet_nested(cols = vars(nSignatures),
-                      rows = vars(nEpochs, validationPerc),
-                      switch = "x") +
-    ylab("Loss") +
-    scale_y_continuous(sec.axis = sec_axis(~., name = "N epochs\n% samples used for validation", breaks = NULL, labels = NULL)) +
-    xlab("K signatures") +
-    ggtitle(paste0("Epoch of model with lowest validation loss -- ", unique(all_best_model_losses_epoch$nFeatures)," features, input coefficients not normalized, batch size = ", 64, ", 1st encoder layer size = ", 128, " neurons")) +
-    theme_bw() +
-    theme(text = element_text(size = 10), 
-          axis.text.x = element_blank(),
-          axis.line.x = element_blank(),
-          axis.ticks.x = element_blank(),
-          legend.position = "right",
-          strip.background = element_blank(),
-          legend.title = element_blank(),
-          plot.title = element_text(hjust = 0.5))
-ggsave(paste0("plots/compare_nepochs_nsig_valperc_.jpg"),
-       plot = nepochs_nsig_valperc,
-       device = "jpg",
-       width = 16,
-       height = 9,
-       dpi = 600)
-
-
-## focus on a promising set of parameters
-best_parameters_plot = ggplot(all_best_model_losses_epoch %>% 
-                                            filter(validationPerc == 10),
-                                          aes(x = model,
-                                              y = loss)) +
-  geom_col(aes(fill = model),
-           linewidth = 1) +
-  scale_fill_manual(values = c("black", "lightgray")) +
-  geom_label(data = all_best_model_losses_epoch %>% 
-               filter(normalization=="no" &
-                        batchSize == 64 &
-                        validationPerc == 10 &
-                        l1Size == 128 &
-                        filter(model == "training")),
-             aes(label = min_val_loss_epoch),
-             fill = "white",
-             col = "black",
-             size = 4,
-             nudge_y = 0.01,
-             nudge_x = 0.5,
-             label.padding = unit(0.01, "lines"),
+             label.padding = unit(0.05, "lines"),
              label.size = 0) +
   facet_wrap(facets = vars(nSignatures),
              nrow = 1,
              strip.position = "bottom") +
   ylab("Loss") +
   xlab("K signatures") +
-  ggtitle(paste0("Best model's training vs. validation losses for ",unique(all_best_model_losses_epoch$nFeatures)," features and ",N_epochs," epochs -- Epoch of min. validation loss indicated\nInput coefficients not normalized, batch size = ", 64, ", validation set = ", 10, "%, 1st encoder layer size = ", 128, " neurons")) +
+  ggtitle(paste0("Epoch of model with lowest validation loss -- ", N_features," features, ", N_epochs, " epochs, ", validation_perc, "% samples used for validation, input coefficients normalization: '", normalized, "', batch size: ", batch_size, ", 1st encoder layer size: ", l1_size, " neurons")) +
   theme_classic() +
   theme(text = element_text(size = 10), 
         axis.text.x = element_blank(),
         axis.ticks.x = element_blank(),
         legend.position = "right",
         strip.background = element_blank(),
-        plot.title = element_text(hjust = 0.5))
-ggsave(paste0("plots/best_parameters_",N_epochs,"epochs.jpg"),
+        plot.title = element_text(hjust = 0.5, size = 10))
+ggsave(paste0("plots/best_parameters.jpg"),
        plot = best_parameters_plot,
        device = "jpg",
        width = 16,
@@ -253,6 +278,7 @@ cosine_similarity_cutoff = 0
 cosmic_similarity_cutoff = 0
 max_n_feature_hits = 3
 regfeats_cosmic_assoc = list()
+n_top_similar_cosmic = 2
 
 trinuc_96 = c("A(C>A)A", "A(C>A)C", "A(C>A)G", "A(C>A)T",
               "C(C>A)A", "C(C>A)C", "C(C>A)G", "C(C>A)T",
@@ -296,16 +322,25 @@ names(fixed_jet_colors) = sample_pheno_levels
 ## create plots
 
 # load exposures and weights for given set of parameters (for all values of k)
-exposures_list = lapply(Sys.glob("res/nFeatures_142__nSignatures_*__nEpochs_",N_epochs,"__batchSize_64__l1Size_128__validationPerc_10__normalization_no__seed_*/signature_exposures.tsv"),
+
+N_features = unique(all_best_model_losses_epoch$nFeatures)
+N_epochs = 1000
+validation_perc = 10
+normalized = "no"
+batch_size = 64
+l1_size = 128
+
+exposures_list = lapply(Sys.glob(paste0("res/nFeatures_", N_features, "__nSignatures_*__nEpochs_",N_epochs,"__batchSize_", batch_size, "__l1Size_", l1_size, "__validationPerc_", validation_perc, "__normalization_", normalized, "__seed_*/signature_exposures.tsv")),
                         read_tsv) %>% 
   setNames(sapply(., function(x) paste0("K",ncol(x) - 1)))
-weights_list = lapply(Sys.glob("res/nFeatures_142__nSignatures_*__nEpochs_",N_epochs,"__batchSize_64__l1Size_128__validationPerc_10__normalization_no__seed_*/signature_weights.tsv"),
+weights_list = lapply(Sys.glob(paste0("res/nFeatures_", N_features, "__nSignatures_*__nEpochs_",N_epochs,"__batchSize_", batch_size, "__l1Size_", l1_size, "__validationPerc_", validation_perc, "__normalization_", normalized, "__seed_*/signature_weights.tsv")),
                       read_tsv) %>% 
   setNames(sapply(., function(x) paste0("K",ncol(x) - 1)))
 
 # define combinations of nFact and k that we want to plot
-maxK = 22
-range_k = paste0("K", seq(13, maxK))
+
+range_k = mixedsort(names(exposures_list))
+maxK = max(as.numeric(gsub("K", "", range_k)))
 
 for(optimal_k in range_k){
   
@@ -318,13 +353,13 @@ for(optimal_k in range_k){
     # add metadata info (e.g. treatments, MSI, HR, smoking...)
     left_join(samples_info) %>%
     filter(!is.na(Exposure))
-
+  
   ## parse signature weights
-
+  
   # SBS weights in signatures
   weights = weights_list[[optimal_k]] %>%
     pivot_longer(cols = contains("ae"), names_to = "Signature", values_to = "Weight") %>%
-    mutate(Signature = factor(Signature, levels = paste0("ae", seq(0, as.numeric(gsub("K", "", optimal_k))-1)))) %>% 
+    mutate(Signature = factor(Signature, levels = paste0("ae", seq(as.numeric(gsub("K", "", optimal_k))-1, 0)))) %>% 
     arrange(Signature) %>% 
     relocate(Signature) %>% 
     mutate(feature_group = ifelse(str_detect(Feature, ">"),
@@ -343,12 +378,11 @@ for(optimal_k in range_k){
                           levels = rev_trinuc_96,
                           ordered = T),
            `Regional\nfeature` = ifelse(feature_group == "Regional\nfeature",
-                                         Feature,
-                                         NA)) %>%
+                                        Feature,
+                                        NA)) %>%
     arrange(SBS96, `Regional\nfeature`)
-
+  
   ### sigprofiler (for SBS)
-  n_top_similar_cosmic = 3
   cosmic_sig_similarity = weights %>%
     filter(feature_group == "SBS") %>%
     select(-c(Feature, feature_group, `SBS group`, `Regional\nfeature`)) %>%
@@ -374,19 +408,19 @@ for(optimal_k in range_k){
     pluck("similarity") %>%
     data.frame %>%
     rownames_to_column("Signature") %>%
-    mutate(Signature = factor(Signature, levels = paste0("ae", seq(0, as.numeric(gsub("K", "", optimal_k))-1)))) %>% 
+    mutate(Signature = factor(Signature, levels = paste0("ae", seq(as.numeric(gsub("K", "", optimal_k))-1, 0)))) %>% 
     pivot_longer(cols = !contains("Signature"), names_to = "COSMIC", values_to = "Similarity") %>%
     # keep top similarity cosmic sbs for each signature
     group_by(Signature) %>%
-    arrange(desc(Similarity)) %>%
+    arrange(Similarity) %>%
     slice_head(n = n_top_similar_cosmic) %>%
     ungroup %>%
     mutate(Similarity = round(Similarity, 2)) %>%
     unite("Max. sim. COSMIC", COSMIC, Similarity, sep = ": ") %>% 
     aggregate(`Max. sim. COSMIC` ~ Signature, data = ., FUN = paste, collapse = " / ")
-
+  
   weights = left_join(weights, cosmic_sig_similarity)
-
+  
   
   #######################################################################################
   #### cosine similarities between the weight profiles of the different signatures
@@ -415,10 +449,10 @@ for(optimal_k in range_k){
            feature_type = "SBS96")
   
   heatmap_SBS96_sig_similarities = ggplot(SBS96_sig_similarities_clustered %>%
-                                               # make low-right triangle
-                                               filter(x >= y),
-                                             aes(x = x,
-                                                 y = y)) +
+                                            # make low-right triangle
+                                            filter(x >= y),
+                                          aes(x = x,
+                                              y = y)) +
     geom_tile(aes(fill = `cosine similarity`)) +
     scale_fill_gradientn(colours=c("white", "blue"),
                          limits = c(min(SBS96_sig_similarities_clustered$`cosine similarity`),
@@ -429,7 +463,7 @@ for(optimal_k in range_k){
                label.r = unit(0.01, "lines"),
                label.size = unit(0, "mm"),
                label.padding  = unit(0.01, "lines"),
-               size = 10) +
+               size = 6) +
     xlab("") +
     ylab("") +
     theme_classic() +
@@ -454,11 +488,11 @@ for(optimal_k in range_k){
     column_to_rownames("Signature") %>%
     as.matrix() %>%
     cosineSimil()
-
+  
   # perform hierarchical clustering (on negative matrix, to trick it since it requires distances, not similarities)
   rowclus = hclust(as.dist(-reg_feat_sig_similarities))    # cluster the rows
   colclus = hclust(t(as.dist(-reg_feat_sig_similarities))) # cluster the columns
-
+  
   # bring the data.frame into a from easily usable by ggplot
   reg_feat_sig_similarities_clustered = ggdendroplot::hmReady(-reg_feat_sig_similarities,
                                                               colclus=colclus, rowclus=rowclus) %>%
@@ -467,7 +501,7 @@ for(optimal_k in range_k){
            "SigB" = "variable") %>%
     mutate(`cosine similarity` = -`cosine similarity`,
            feature_type = "Regional features")
-
+  
   heatmap_reg_feat_sig_similarities = ggplot(reg_feat_sig_similarities_clustered %>%
                                                # make low-right triangle
                                                filter(x >= y),
@@ -483,7 +517,7 @@ for(optimal_k in range_k){
                label.r = unit(0.01, "lines"),
                label.size = unit(0, "mm"),
                label.padding  = unit(0.01, "lines"),
-               size = 10) +
+               size = 6) +
     xlab("") +
     ylab("") +
     theme_classic() +
@@ -497,7 +531,7 @@ for(optimal_k in range_k){
          width = 25,
          height = 14,
          dpi = 600)
-
+  
   ### 3) calculate delta
   # "real" because later will be compared to bootstrapped ones
   delta_cos_simil_real = bind_rows(SBS96_sig_similarities_clustered,
@@ -542,7 +576,7 @@ for(optimal_k in range_k){
                label.r = unit(0.01, "lines"),
                label.size = unit(0, "mm"),
                label.padding  = unit(0.01, "lines"),
-               size = 10) +
+               size = 6) +
     xlab("") +
     ylab("") +
     theme_classic() +
@@ -643,7 +677,7 @@ for(optimal_k in range_k){
   #               filter(group == "Real" & `Δ cosine similarity (standardized)` <= -1.96),
   #             aes(label = Sigpair,
   #                 y = 0),
-  #             angle=90,
+  #             angle = 90,
   #             vjust = -0.1,
   #             hjust = -0.1) +
   #   theme_bw() +
@@ -666,7 +700,7 @@ for(optimal_k in range_k){
            `Max. sim. COSMIC` = gsub(" / .*", "", `Max. sim. COSMIC`)) %>%
     separate(`Max. sim. COSMIC`, into = c("COSMIC", "Max. sim."), sep = ": ") %>% 
     filter(`Max. sim.` >= cosmic_similarity_cutoff)
-    
+  
   regfeat_cosmic = bind_rows(SBS96_sig_similarities_clustered,
                              reg_feat_sig_similarities_clustered) %>% 
     select(-c(x,y)) %>% 
@@ -684,7 +718,7 @@ for(optimal_k in range_k){
   
   # only continue if it is promising 
   if((select(regfeat_cosmic, pair_id) %>% distinct %>% nrow) < nrow(regfeat_cosmic) & # this indicates that at least 1 same pair of signatures is very similar both within in SBS96 and within reg feat
-      any(regfeat_cosmic$SigA %in% cosmic_sim_good$Signature) & any(regfeat_cosmic$SigB %in% cosmic_sim_good$Signature)){ # this indicates that there is at least 1 pair of signatures that are very similar in regfeat_cosmic AND that their SBS components are the most similar to the same cosmic signature
+     any(regfeat_cosmic$SigA %in% cosmic_sim_good$Signature) & any(regfeat_cosmic$SigB %in% cosmic_sim_good$Signature)){ # this indicates that there is at least 1 pair of signatures that are very similar in regfeat_cosmic AND that their SBS components are the most similar to the same cosmic signature
     
     # filter to make effective the conditions above
     regfeat_cosmic_filtered = regfeat_cosmic %>% 
@@ -735,7 +769,7 @@ for(optimal_k in range_k){
           
           # only record it IF the cosmic signature that is most common to the SBS component is the same for both signatures
           if(length(unique(gsub(": .*", "", regfeats_cosmic_assoc_table$`Max. sim. COSMIC`))) == 1){
-          
+            
             regfeats_cosmic_assoc[[optimal_k]] = regfeats_cosmic_assoc_table
           }
         }
@@ -745,7 +779,7 @@ for(optimal_k in range_k){
   
   
   ###################################################################################################
-
+  
   ## write it for random forests
   write_tsv(exposures,
             paste0("exposures_weights/nEpochs",N_epochs,"_", optimal_k, "_exposures.tsv"))
@@ -753,12 +787,12 @@ for(optimal_k in range_k){
               rename("Chromatin feature" = "Regional\nfeature") %>%
               mutate(`Chromatin feature` = gsub("\n", "_", `Chromatin feature`)),
             paste0("exposures_weights/nEpochs",N_epochs,"_", optimal_k, "_weights.tsv"))
-
-
+  
+  
   ##### plotting
-
+  
   #### exposures plot (heatmap)
-
+  
   exposures_plot = ggplot(exposures,
                           aes(x = `alteration`,
                               y = Signature)) +
@@ -769,20 +803,21 @@ for(optimal_k in range_k){
     theme_bw() +
     xlab("Altered pathway OR treatment") +
     ylab("Signature id") +
-    theme(axis.text.x = element_text(angle = 45, hjust=1, size = 6),
-          axis.text.y = element_text(angle = 90, hjust=0.5, size = 15),
-          strip.text.x.top = element_text(size = 10, angle = 90, hjust=0),
-          text = element_text(size = 15),
+    theme(axis.text.x = element_text(angle = 45, hjust=1, size = 5),
+          axis.text.y = element_text(size = 10),
+          strip.text.x.top = element_text(size = 8, angle = 90, hjust=0),
+          text = element_text(size = 10),
           strip.background = element_blank(),
           legend.key.size = unit(1, "cm"),
+          legend.text = element_text(size = 10),
           legend.position = "top")
-
-
+  
+  
   #### weights plots
-
+  
   ## regional features
-
-   weights_plot_regfeat = ggplot(weights %>%
+  
+  weights_plot_regfeat = ggplot(weights %>%
                                   filter(feature_group != "SBS") %>%
                                   select(-c(Feature, feature_group, contains("SBS"))),
                                 aes(x = Weight,
@@ -794,9 +829,8 @@ for(optimal_k in range_k){
     geom_col(aes(fill = `Regional\nfeature`)) +
     scale_fill_manual(values = jet_colors(length(unique(weights$`Regional\nfeature`)))) +
     guides(fill = guide_legend(override.aes = list(size=0.5),
-                               ncol = 4)) +
-    geom_vline(xintercept = 0, linetype = "dotted", color = "white", linewidth = 1) +
-    facet_wrap(~desc(Signature), ncol = 1, scales = "free",
+                               nrow = 6)) +
+    facet_wrap(~Signature, ncol = 1, scales = "free",
                strip.position="right") +
     xlab("Contribution (regional features)") +
     ylab("") +
@@ -805,88 +839,86 @@ for(optimal_k in range_k){
           axis.text.y = element_blank(),
           axis.line.y = element_blank(),
           axis.text.x = element_text(size = 10),
-          text = element_text(size = 15),
+          text = element_text(size = 10),
           strip.background = element_blank(),
+          strip.text.y.right = element_text(angle = 0),
           legend.title = element_blank(),
           legend.position = "top",
+          legend.justification='right',
           legend.text = element_text(size = 7))
-
+  
   ## SBS
-
+  
   # to label the SBS plots with their COSMIC similarity
   max_sim_cosmic = weights %>%
     select(Signature,`Max. sim. COSMIC`) %>%
     distinct %>%
-    arrange(desc(Signature)) %>%
+    arrange(Signature) %>%
     mutate(`Max. sim. COSMIC` = as.character(`Max. sim. COSMIC`)) %>%
     deframe()
-
+  
   weights_plot_SBS = ggplot(weights %>%
                               filter(feature_group == "SBS") %>%
-                              select(-c(Feature, feature_group, `Regional\nfeature`)) %>%
-                              mutate(`Max. sim. COSMIC` = factor(`Max. sim. COSMIC`, levels = as.character(max_sim_cosmic), ordered = T)),
+                              select(-c(Feature, feature_group, `Regional\nfeature`)),
                             aes(x = Weight,
                                 y = SBS96)) +
     scale_x_continuous(expand = c(0, 0),
                        breaks = seq(-1, 1, 0.1),
                        labels = function(x) round(x, 1)) +
-    scale_y_discrete(position = "right") +
     geom_col(aes(fill = `SBS group`)) +
     scale_fill_manual(values = c("#00bfeb", "black", "#f3282f", "#cdc9ca", "#a1cc6b", "#f1c6c5")) +
     guides(fill = guide_legend(override.aes = list(size=1),
                                nrow = 6)) +
-    facet_wrap(~desc(Signature), ncol = 1, scales = "free",
-               strip.position="right",
-               labeller = as_labeller(max_sim_cosmic)) +
-    geom_vline(xintercept = 0, linetype = "dotted", color = "white", linewidth = 1) +
+    facet_wrap(~Signature, ncol = 1, scales = "free",
+               strip.position="right") +
     xlab("Contribution (SBS)") +
-    ylab("Top similar COSMIC SBS") +
+    ylab("") +
     theme_classic() +
     theme(axis.ticks.y = element_blank(),
           axis.text.y = element_blank(),
           axis.line.y = element_blank(),
-          axis.text.x = element_text(size = 10),
-          strip.text.y = element_text(size = 15),
-          text = element_text(size = 15),
+          axis.text.x = element_text(size = 8),
+          text = element_text(size = 10),
           strip.background = element_blank(),
-          ## THIS removes the SBS similarity names and values, since we will add bar charts instead
           strip.text.y.right = element_blank(),
-          ## THIS makes the 'top similar cosmic SBS' text flipped
-          axis.title.y.right = element_text(angle = 90),
           legend.title = element_blank(),
-          legend.position = "top")
+          legend.position = "top",
+          plot.margin = margin(0,0,0,-0.2, "cm"))
   
   # barplot of SBS cosmic top similarities
   barplot_cosmic = ggplot(weights %>%
-           filter(feature_group == "SBS") %>%
-           select(-c(Feature, feature_group, `Regional\nfeature`)) %>%
-           mutate(`Max. sim. COSMIC` = factor(`Max. sim. COSMIC`, levels = as.character(max_sim_cosmic), ordered = T)) %>% 
-           select(Signature, `Max. sim. COSMIC`) %>% 
-           distinct %>% 
-           separate(`Max. sim. COSMIC`, into = c("top-1", "top-2", "top-3"), sep = " / ") %>% 
-           pivot_longer(cols = contains("top-"),
-                        names_to = "Max. sim. COSMIC",
-                        values_to = "COSMIC name and similarity") %>% 
-           separate(`COSMIC name and similarity`, into = c("COSMIC", "cosine similarity"), sep = ": ") %>% 
-           select(-`Max. sim. COSMIC`) %>% 
-           mutate(`cosine similarity` = as.numeric(`cosine similarity`)) %>% 
-           arrange(desc(Signature), desc(`cosine similarity`)),
-         aes(x = COSMIC,
-             y = `cosine similarity`)) +
+                            filter(feature_group == "SBS") %>%
+                            select(-c(Feature, feature_group, `Regional\nfeature`)) %>%
+                            select(Signature, `Max. sim. COSMIC`) %>% 
+                            distinct %>% 
+                            separate(`Max. sim. COSMIC`, into = c("top-1", "top-2"), sep = " / ") %>% 
+                            pivot_longer(cols = contains("top-"),
+                                         names_to = "Max. sim. COSMIC",
+                                         values_to = "COSMIC name and similarity") %>% 
+                            separate(`COSMIC name and similarity`, into = c("COSMIC", "cosine similarity"), sep = ": ") %>% 
+                            select(-`Max. sim. COSMIC`) %>% 
+                            mutate(`cosine similarity` = as.numeric(`cosine similarity`)) %>% 
+                            arrange(Signature, desc(`cosine similarity`)) %>% 
+                            # remove SBS names if cos. sim is 0
+                            mutate(COSMIC = ifelse(`cosine similarity` == 0, "", COSMIC)),
+                          aes(x = COSMIC,
+                              y = `cosine similarity`)) +
     coord_flip() +
-    scale_y_continuous(breaks = c(0, 0.5, 0.75, 1.2)) +
+    scale_y_continuous(breaks = c(0, 0.02, 0.04)) +
     geom_col() +
-    facet_wrap(~desc(Signature), ncol = 1, scales = "free_y") +
+    facet_wrap(~Signature, ncol = 1, scales = "free_y") +
     theme_classic() +
     xlab("") +
+    ggtitle("Top similar\nCOSMIC SBS") +
     ylab("cos similarity") +
-    theme(text = element_text(size = 15),
-          axis.text.x = element_text(size = 8, angle = 90),
+    theme(text = element_text(size = 10),
+          axis.text.x = element_text(size = 8, angle = 0),
           strip.text = element_blank(),
-          strip.background = element_blank())
-
-  combined_plots = plot_grid(NULL,
-                             plot_grid(exposures_plot, ncol = 1),
+          strip.background = element_blank(),
+          plot.title = element_text(hjust=0.5),
+          plot.margin = margin(3,0,0.2,-0.1, "cm"))
+  
+  combined_plots = plot_grid(plot_grid(exposures_plot, ncol = 1),
                              NULL,
                              plot_grid(weights_plot_regfeat, ncol = 1),
                              NULL,
@@ -894,9 +926,9 @@ for(optimal_k in range_k){
                              NULL,
                              plot_grid(barplot_cosmic, ncol = 1),
                              NULL,
-                             ncol = 9,
-                             rel_widths = c(0.02, 1, 0.02, 0.2, 0.01, 0.1, 0.01,0.1, 0.01))
-  ggsave(paste0("plots/nEpochs",N_epochs,"_exposures_weights_plot__", optimal_k, ".jpeg"),
+                             ncol = 8,
+                             rel_widths = c(1, 0.02, 0.2, -0.005, 0.1, -0.001, 0.1, 0.01))
+  ggsave(paste0("plots/nEpochs", N_epochs, "_exposures_weights_plot__", optimal_k, ".jpeg"),
          plot = combined_plots,
          device = "jpeg",
          width = 25,

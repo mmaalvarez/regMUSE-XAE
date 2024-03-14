@@ -8,7 +8,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import sys
 from glob import glob
 import datetime
-from tensorflow.keras.constraints import Constraint
+from tensorflow.keras.constraints import NonNeg,Constraint
 from tensorflow.keras.regularizers import OrthogonalRegularizer,L2
 from tensorflow.keras.callbacks import Callback,ModelCheckpoint
 from tensorflow.keras.layers import Input,Dense,BatchNormalization
@@ -155,7 +155,7 @@ class minimum_volume(Constraint):
                 'beta': float(self.beta)}
 
     
-def MUSE_XAE(input_dim,l_1,n_signatures,beta=0.001,activation='softplus',reg='min_vol'):
+def MUSE_XAE(input_dim,l_1,n_signatures,allow_negative_weights,beta=0.001,activation='softplus',reg='min_vol'):
 
     # hybrid autoencoder due to non linear encoder and linear decoder
 
@@ -177,7 +177,12 @@ def MUSE_XAE(input_dim,l_1,n_signatures,beta=0.001,activation='softplus',reg='mi
 
     n_signatures = Dense(n_signatures,activation='softplus',name='latent_space')(latent_1)
 
-    decoder = Dense(input_dim,activation='linear',name='decoder_layer',use_bias=False,kernel_regularizer=regularizer)(n_signatures)
+    if allow_negative_weights == 'yes':
+        # negative weights allowed in decoder layer
+        decoder = Dense(input_dim,activation='linear',name='decoder_layer',use_bias=False,kernel_regularizer=regularizer)(n_signatures)
+    else:
+        # apply non-negative constraint to decoder layer weights
+        decoder = Dense(input_dim,activation='linear',name='decoder_layer',use_bias=False,kernel_constraint=NonNeg(),kernel_regularizer=regularizer)(n_signatures)
     
     ## encoder model: map the input layer to its encoded representation (i.e. to the latent space)
     # this will be used after training
@@ -211,11 +216,12 @@ class DataSwitchCallback(Callback):
         self.epoch_count += 1
         
         
-def train_model(training_validation_dfs_dict, input_dim, feature_names, n_signatures, epochs, batch_size, l1_size, loss, activation, seed, output_folder_name):
+def train_model(training_validation_dfs_dict, input_dim, feature_names, n_signatures, epochs, batch_size, l1_size, loss, activation, allow_negative_weights, seed, output_folder_name):
         
     autoencoder,encoder = MUSE_XAE(input_dim=input_dim, 
                                    l_1=l1_size,
-                                   n_signatures=n_signatures, 
+                                   n_signatures=n_signatures,
+                                   allow_negative_weights=allow_negative_weights,
                                    activation=activation)
 
     autoencoder.compile(optimizer=Adam(), loss=loss, metrics=['mse'])
