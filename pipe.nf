@@ -1,13 +1,13 @@
 #!/usr/bin/env nextflow
 
 // variables (channels)
-n_signatures = Channel.from( [ '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '24', '25', '26', '27', '28', '29', '30', '31', '32'] )
-epochs = Channel.from( [ '1000', '2000', '3000', '4000', '5000', '6000' ] )
+n_signatures = Channel.from( [ '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '24', '25', '26', '27', '28', '29', '30', '31', '32', '33', '34', '35' ] )
+epochs = Channel.from( [ '1000' , '2000', '3000', '4000', '5000', '6000' ] )
 batch_size = Channel.from( [ '64' ] )
 l1_size = Channel.from( [ '128' ] )
 validation_perc = Channel.from( [ '10', '20', '30' ] )
-normalization = Channel.from( [ 'yes', 'no' ] )
-allow_negative_weights = Channel.from( [ 'yes' ]) //'no'
+normalization = Channel.from( [ 'yes', 'no' ] ) 
+allow_negative_weights = Channel.from( [ 'yes', 'no' ]) 
 
 process run_autoencoder {
 
