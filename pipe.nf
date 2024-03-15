@@ -11,9 +11,9 @@ allow_negative_weights = Channel.from( [ 'yes', 'no' ])
 
 process run_autoencoder {
 
-    publishDir "$PWD/res/", mode: 'copy'
+    publishDir "$PWD/res/", mode: 'copy', pattern: 'nFeatures_*__nSignatures_*__nEpochs_*__batchSize_*__l1Size_*__validationPerc_*__normalization_*__allow_negative_weights_*__seed_*/*'
 
-    time = { (params.minutes + 5*(task.attempt-1)).min }
+    time = { (params.minutes + 15*(task.attempt-1)).min }
     memory = { (params.memGB + 2*(task.attempt-1)).GB }
 
     input:

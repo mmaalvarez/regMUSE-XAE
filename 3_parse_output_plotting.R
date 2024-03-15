@@ -209,12 +209,73 @@ for(normalized in c("yes", "no")){
          dpi = 600)
 }
 
+## split plot for ALLOW NEGATIVE WEIGHTS yes/no
+for(negative_weights_allowed in c("yes", "no")){
+
+  ### compare nepochs, nsignatures, and validation %
+  nepochs_nsig_valperc = ggplot(all_best_model_losses_epoch %>% 
+                                  filter(allow_negative_weights==negative_weights_allowed &
+                                           batchSize == 64 &
+                                           l1Size == 128),
+                                aes(x = model,
+                                    y = loss,
+                                    col = `Validation loss`)) +
+    geom_col(aes(fill = model),
+             linewidth = 1.2) +
+    scale_fill_manual(values = c("black", "lightgray")) +
+    geom_tile() +
+    scale_color_gradient(low = "blue", high = "red") +
+    geom_hline(yintercept = all_best_model_losses_epoch %>% 
+                 filter(allow_negative_weights==negative_weights_allowed &
+                          batchSize == 64 &
+                          l1Size == 128) %>% 
+                 pull(`Validation loss`) %>% min, 
+               linetype = "dotted", color = "yellow") +
+    geom_label(data = all_best_model_losses_epoch %>% 
+                 filter(allow_negative_weights==negative_weights_allowed &
+                          batchSize == 64 &
+                          l1Size == 128 &
+                          model == "training"),
+               aes(label = min_val_loss_epoch),
+               fill = "white",
+               col = "black",
+               size = 1,
+               nudge_y = -0.13,
+               nudge_x = 0.5,
+               label.padding = unit(0.05, "lines"),
+               label.size = 0) +
+    ggh4x::facet_nested(cols = vars(nSignatures, normalization),
+                        rows = vars(nEpochs, validationPerc),
+                        switch = "x") +
+    ylab("Loss") +
+    scale_y_continuous(sec.axis = sec_axis(~., name = "N epochs\n% samples used for validation", breaks = NULL, labels = NULL)) +
+    xlab("Input coefficients normalization\nK signatures") +
+    ggtitle(paste0("Epoch of model with lowest validation loss -- ", unique(all_best_model_losses_epoch$nFeatures)," features, negative weights allowed in decoder: '", negative_weights_allowed, "', batch size: ", 64, ", 1st encoder layer size: ", 128, " neurons")) +
+    theme_bw() +
+    theme(text = element_text(size = 8), 
+          axis.text.x = element_blank(),
+          axis.text.y = element_text(size = 6),
+          panel.grid.minor = element_blank(),
+          axis.line.x = element_blank(),
+          axis.ticks.x = element_blank(),
+          strip.background = element_rect(fill = "white"),
+          legend.position = "right",
+          plot.title = element_text(hjust = 0.5))
+  ggsave(paste0("plots/compare_nepochs_nsig_valperc_normalization_negweightsallowed_", negative_weights_allowed, ".jpg"),
+         plot = nepochs_nsig_valperc,
+         device = "jpg",
+         width = 16,
+         height = 9,
+         dpi = 600)
+}
+
+
 ## show signatures for a promising set of parameters
 N_features = unique(all_best_model_losses_epoch$nFeatures)
 N_epochs = 1000
 validation_perc = 10
 normalized = "no"
-negative_weights_allowed = "no"
+negative_weights_allowed = "yes"
 batch_size = 64
 l1_size = 128
 
@@ -261,7 +322,7 @@ best_parameters_plot = ggplot(all_best_model_losses_epoch %>%
         legend.position = "right",
         strip.background = element_blank(),
         plot.title = element_text(hjust = 0.5, size = 10))
-ggsave(paste0("plots/best_parameters_negweightsallowed_", negative_weights_allowed, ".jpg"),
+ggsave(paste0("plots/best_parameters_", N_epochs, "epochs_negweightsallowed_", negative_weights_allowed, ".jpg"),
        plot = best_parameters_plot,
        device = "jpg",
        width = 16,
@@ -331,14 +392,14 @@ N_features = unique(all_best_model_losses_epoch$nFeatures)
 N_epochs = 1000
 validation_perc = 10
 normalized = "no"
-allow_negative_weights = "no"
+negative_weights_allowed = "yes"
 batch_size = 64
 l1_size = 128
 
-exposures_list = lapply(Sys.glob(paste0("res/nFeatures_", N_features, "__nSignatures_*__nEpochs_",N_epochs,"__batchSize_", batch_size, "__l1Size_", l1_size, "__validationPerc_", validation_perc, "__normalization_", normalized, "__allow_negative_weights_", allow_negative_weights, "__seed_*/signature_exposures.tsv")),
+exposures_list = lapply(Sys.glob(paste0("res/nFeatures_", N_features, "__nSignatures_*__nEpochs_",N_epochs,"__batchSize_", batch_size, "__l1Size_", l1_size, "__validationPerc_", validation_perc, "__normalization_", normalized, "__allow_negative_weights_", negative_weights_allowed, "__seed_*/signature_exposures.tsv")),
                         read_tsv) %>% 
   setNames(sapply(., function(x) paste0("K",ncol(x) - 1)))
-weights_list = lapply(Sys.glob(paste0("res/nFeatures_", N_features, "__nSignatures_*__nEpochs_",N_epochs,"__batchSize_", batch_size, "__l1Size_", l1_size, "__validationPerc_", validation_perc, "__normalization_", normalized, "__allow_negative_weights_", allow_negative_weights, "__seed_*/signature_weights.tsv")),
+weights_list = lapply(Sys.glob(paste0("res/nFeatures_", N_features, "__nSignatures_*__nEpochs_",N_epochs,"__batchSize_", batch_size, "__l1Size_", l1_size, "__validationPerc_", validation_perc, "__normalization_", normalized, "__allow_negative_weights_", negative_weights_allowed, "__seed_*/signature_weights.tsv")),
                       read_tsv) %>% 
   setNames(sapply(., function(x) paste0("K",ncol(x) - 1)))
 
@@ -909,7 +970,7 @@ for(optimal_k in range_k){
                           aes(x = COSMIC,
                               y = `cosine similarity`)) +
     coord_flip() +
-    scale_y_continuous(breaks = c(0, 0.02, 0.04)) +
+    scale_y_continuous(n.breaks = 2) +
     geom_col() +
     facet_wrap(~Signature, ncol = 1, scales = "free_y") +
     theme_classic() +
@@ -933,7 +994,7 @@ for(optimal_k in range_k){
                              NULL,
                              ncol = 8,
                              rel_widths = c(1, 0.02, 0.2, -0.005, 0.1, -0.001, 0.1, 0.01))
-  ggsave(paste0("plots/exposures_weights_plot__nFeatures_", N_features, "__nSignatures_*__nEpochs_",N_epochs,"__batchSize_", batch_size, "__l1Size_", l1_size, "__validationPerc_", validation_perc, "__normalization_", normalized, "__allow_negative_weights_", allow_negative_weights, "__", optimal_k, ".jpeg"),
+  ggsave(paste0("plots/exposures_weights_plot__nFeatures_", N_features, "__nEpochs_",N_epochs,"__batchSize_", batch_size, "__l1Size_", l1_size, "__validationPerc_", validation_perc, "__normalization_", normalized, "__allow_negative_weights_", negative_weights_allowed, "__", optimal_k, ".jpeg"),
          plot = combined_plots,
          device = "jpeg",
          width = 25,
@@ -943,8 +1004,8 @@ for(optimal_k in range_k){
 
 write_tsv(bind_rows(real_deltas_vs_bootstrap_hits) %>% 
             arrange(`Δ cosine similarity (standardized)`),
-          "plots/cos_sim_deltas/nEpochs",N_epochs,"_real_deltas_vs_bootstrap_hits.tsv")
+          paste0("plots/cos_sim_deltas/nEpochs",N_epochs,"_real_deltas_vs_bootstrap_hits.tsv"))
 
 write_tsv(bind_rows(regfeats_cosmic_assoc) %>% 
             arrange(K, Sigpair_i),
-          "plots/cos_sim_deltas/nEpochs",N_epochs,"_regfeats_cosmic_assoc.tsv")
+          paste0("plots/cos_sim_deltas/nEpochs",N_epochs,"_regfeats_cosmic_assoc.tsv"))
