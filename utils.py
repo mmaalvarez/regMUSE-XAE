@@ -8,12 +8,17 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import sys
 from glob import glob
 import datetime
+from lap import lapjv
+import sklearn
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.cluster import KMeans
+from tensorflow.keras import backend as K
+from tensorflow.keras import activations,regularizers,constraints
 from tensorflow.keras.constraints import NonNeg,Constraint
 from tensorflow.keras.regularizers import OrthogonalRegularizer,L2
-from tensorflow.keras.callbacks import Callback,ModelCheckpoint
+from tensorflow.keras.callbacks import Callback,ModelCheckpoint,EarlyStopping
 from tensorflow.keras.layers import Input,Dense,BatchNormalization
-from tensorflow.keras.models import Model
-from tensorflow.keras import backend as K
+from tensorflow.keras.models import Model,load_model
 from tensorflow.keras.optimizers.legacy import Adam
 tf.compat.v1.disable_eager_execution()
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
@@ -155,7 +160,7 @@ class minimum_volume(Constraint):
                 'beta': float(self.beta)}
 
     
-def MUSE_XAE(input_dim,l_1,n_signatures,allow_negative_weights,beta=0.001,activation='softplus',reg='min_vol'):
+def MUSE_XAE(input_dim,l_1,n_signatures,allow_negative_weights,beta=0.001,activation='softplus',reg='min_vol',refit=False):
 
     # hybrid autoencoder due to non linear encoder and linear decoder
 
@@ -166,6 +171,10 @@ def MUSE_XAE(input_dim,l_1,n_signatures,allow_negative_weights,beta=0.001,activa
     elif reg=='L2' : 
         regularizer=L2(beta)
 
+    ## when training the encoder using a fixed optimal signature in the decoder, in order to just get the sample exposures, use relu
+    if refit==True:
+        activation='relu'
+        
     encoder_input=Input(shape=(input_dim,))
     
     latent_1 = Dense(l_1,activation=activation,name='encoder_layer_1')(encoder_input)
@@ -175,19 +184,20 @@ def MUSE_XAE(input_dim,l_1,n_signatures,allow_negative_weights,beta=0.001,activa
     latent_1 = Dense(l_1/4,activation=activation,name='encoder_layer_3')(latent_1)
     latent_1 = BatchNormalization()(latent_1)
 
-    n_signatures = Dense(n_signatures,activation='softplus',name='latent_space')(latent_1)
+    if refit==True: 
+        signatures = Dense(n_signatures, activation='relu', activity_regularizer=regularizers.l1(1e-3), name='latent_space')(latent_1)
+    else: 
+        signatures = Dense(n_signatures, activation=activation, name='latent_space')(latent_1)    
 
     if allow_negative_weights == 'yes':
         # negative weights allowed in decoder layer
-        decoder = Dense(input_dim,activation='linear',name='decoder_layer',use_bias=False,kernel_regularizer=regularizer)(n_signatures)
+        decoder = Dense(input_dim,activation='linear',name='decoder_layer',use_bias=False,kernel_regularizer=regularizer)(signatures)
     else:
         # apply non-negative constraint to decoder layer weights
-        decoder = Dense(input_dim,activation='linear',name='decoder_layer',use_bias=False,kernel_constraint=NonNeg(),kernel_regularizer=regularizer)(n_signatures)
-    
+        decoder = Dense(input_dim,activation='linear',name='decoder_layer',use_bias=False,kernel_constraint=NonNeg(),kernel_regularizer=regularizer)(signatures)
+       
     ## encoder model: map the input layer to its encoded representation (i.e. to the latent space)
-    # this will be used after training
-    encoder_model = Model(encoder_input,n_signatures)
-    
+    encoder_model = Model(encoder_input,signatures)
     ## autoencoder model: map the input layer to its reconstruction (i.e. to the output layer)
     hybrid_dae = Model(encoder_input,decoder)
     
@@ -216,7 +226,7 @@ class DataSwitchCallback(Callback):
         self.epoch_count += 1
         
         
-def train_model(training_validation_dfs_dict, input_dim, feature_names, n_signatures, epochs, batch_size, l1_size, loss, activation, allow_negative_weights, seed, output_folder_name):
+def train_model(training_validation_dfs_dict, input_dim, feature_names, n_signatures, epochs, batch_size, l1_size, loss, activation, allow_negative_weights, seed, output_folder_name, iter):
         
     autoencoder,encoder = MUSE_XAE(input_dim=input_dim, 
                                    l_1=l1_size,
@@ -235,7 +245,7 @@ def train_model(training_validation_dfs_dict, input_dim, feature_names, n_signat
     ## by default Keras returns the final model from the final training step, regardless if the final model gives the minimum loss on validation data
     # so, if you want to use a model with the lowest loss on validation data, you need to use the ModelCheckpoint callback with parameter save_best_only. After training is done, you need to load saved model. It will be the best model in terms of loss on validation data
     # To do this, create also another instance, this time of the 'ModelCheckpoint' callback
-    save_best_model = ModelCheckpoint(f'{output_folder_name}/best_model_weights',
+    save_best_model = ModelCheckpoint(f'{output_folder_name}/best_model_weights_iter{iter+1}.h5',
                                       monitor='val_loss', 
                                       save_best_only=True, 
                                       save_weights_only=True)
@@ -244,7 +254,6 @@ def train_model(training_validation_dfs_dict, input_dim, feature_names, n_signat
     data_switcher = DataSwitchCallback(training_validation_dfs_dict)
   
     ## Run the training for the 'autoencoder' model
-    # (which simultaneously trains the 'encoder' model)
     
     history = {'loss': [], 'val_loss': []}
     
@@ -280,44 +289,151 @@ def train_model(training_validation_dfs_dict, input_dim, feature_names, n_signat
 
     ## evaluate best model's loss
     
-    # load the weights of the best model (i.e. epoch with minimum validation loss); this automatically also updates the weights of the shared layers in the 'encoder' Model
-    autoencoder.load_weights(f'{output_folder_name}/best_model_weights')
+    # load the weights of the best model (i.e. epoch with minimum validation loss)
+    autoencoder.load_weights(f'{output_folder_name}/best_model_weights_iter{iter+1}.h5')
     
     # now evaluate loss thereof
     best_model_training_loss = autoencoder.evaluate(autoencoder.train_data, autoencoder.train_data)[0]
     best_model_validation_loss = autoencoder.evaluate(autoencoder.val_data, autoencoder.val_data)[0]
     min_val_loss_epoch = history['val_loss'].index(min(history['val_loss'])) + 1
     
-    best_model_losses_epoch = pd.DataFrame({'output_folder_name': [output_folder_name],
-                                            'best_model_training_loss': [best_model_training_loss],
-                                            'best_model_validation_loss': [best_model_validation_loss],
-                                            'min_val_loss_epoch': [min_val_loss_epoch]})
+    best_model_losses_epoch_i = pd.DataFrame({'output_folder_name': [output_folder_name],
+                                              'iter': [iter+1],
+                                              'seed': [seed],
+                                              'best_model_training_loss': [best_model_training_loss],
+                                              'best_model_validation_loss': [best_model_validation_loss],
+                                              'min_val_loss_epoch': [min_val_loss_epoch]})
     
-    print(f"The model from epoch {min_val_loss_epoch} has the lowest validation loss, and therefore it will be used to obtain the final signatures:")
-    print(f'Best model\'s training loss: {best_model_training_loss.round(2)}')
-    print(f'Best model\'s validation loss: {best_model_validation_loss.round(2)}\n')
+    print(f"At iter {iter+1}, the model from epoch {min_val_loss_epoch} has the lowest validation loss, and therefore it will be used to obtain the final signatures:")
+    print(f'At iter {iter+1}, the best model\'s training loss: {best_model_training_loss.round(2)}')
+    print(f'At iter {iter+1}, the best model\'s validation loss: {best_model_validation_loss.round(2)}\n')
 
     ## load signature weights (the weights of the decoder layer -i.e. the last before the output layer)
     signature_weights = pd.DataFrame(autoencoder.layers[-1].get_weights()[0].T).add_prefix('ae')
     # append feature names column
     signature_weights = pd.concat([feature_names, signature_weights], axis=1)
     
-    return autoencoder,encoder,loss_plot,best_model_losses_epoch,signature_weights
+    return autoencoder,loss_plot,best_model_losses_epoch_i,signature_weights
 
 
-def encoder_prediction(encoder, real_df, real_data_sample_names, n_signatures):
+class KMeans_with_matching:
+    def __init__(self, X, n_clusters, max_iter, random=False):
+        
+        self.X = X
+        self.n_clusters = n_clusters
+        self.max_iter = max_iter
+        self.n = X.shape[0]
 
-    encoded_real_df = encoder.predict_on_batch(real_df)
+        if self.n_clusters > 1:
+            model = KMeans(n_clusters=n_clusters, init='random').fit(self.X)
+            self.C = np.asarray(model.cluster_centers_)
+        else:
+            self.C = self.X[np.random.choice(self.n, size=1), :]
 
+        self.C_prev = np.copy(self.C)
+        self.C_history = [np.copy(self.C)]    
+
+    def fit_predict(self):
+        
+        if self.n_clusters == 1:
+            cost = np.zeros((self.n, self.n))
+            for j in range(self.n):
+                cost[0,j] = 1 - cosine_similarity(self.X[j,:].reshape(1,-1), self.C[0,:].reshape(1,-1))
+            for i in range(1, self.n):
+                cost[i,:] = cost[0,:]
+            _, _, colsol = lapjv(cost)
+            self.partition = np.mod(colsol, self.n_clusters)
+            self.C[0,:] = self.X[np.where(self.partition == 0)].mean(axis=0)
+            return pd.DataFrame(self.C).T, self.partition
+
+        for k_iter in range(self.max_iter):
+            cost = np.zeros((self.n, self.n))
+            for i in range(self.n_clusters): 
+                for j in range(self.n):
+                    cost[i,j]=1-cosine_similarity(self.X[j,:].reshape(1,-1),self.C[i,:].reshape(1,-1))
+            for i in range(self.n_clusters, self.n):
+                cost[i,:] = cost[np.mod(i,self.n_clusters),:]
+            _,_,colsol = lapjv(cost)
+            self.partition = np.mod(colsol, self.n_clusters)
+            for i in range(self.n_clusters):
+                self.C[i,:] = self.X[np.where(self.partition == i)].mean(axis=0)
+            self.C_history.append(np.copy(self.C))
+            if np.array_equal(self.C, self.C_prev):
+                break
+            else:
+                self.C_prev = np.copy(self.C)
+            
+        return pd.DataFrame(self.C).T,self.partition
+
+    
+def get_consensus_signatures(n_signatures, extractions, feature_names_col):
+    
+    all_extractions_dfs = pd.concat([pd.DataFrame(df) for df in extractions], axis=1).T
+    X_all = np.asarray(all_extractions_dfs)
+    clustering_model = KMeans_with_matching(X=X_all, n_clusters=n_signatures, max_iter=100)
+    consensus_sig, cluster_labels = clustering_model.fit_predict()
+    consensus_sig = pd.concat([feature_names_col, consensus_sig], axis=1)
+    if n_signatures==1:
+        means_lst=[1]
+        min_sil=1
+        mean_sil=1
+    else:
+        sample_silhouette_values = sklearn.metrics.silhouette_samples(all_extractions_dfs, cluster_labels, metric='cosine')
+        means_lst = []
+
+        for label in range(len(set(cluster_labels))):
+            means_lst.append(sample_silhouette_values[np.array(cluster_labels) == label].mean())
+        min_sil=np.min(means_lst)
+        mean_sil=np.mean(means_lst)
+    
+    return min_sil, mean_sil, consensus_sig, means_lst
+
+
+def encoder_prediction(real_data_df, real_data_sample_names, S, input_dim, l1_size, n_signatures, batch_size, allow_negative_weights, seed, output_folder_name):
+
+    real_data = np.array(real_data_df)
+    
+    autoencoder,encoder = MUSE_XAE(input_dim=input_dim, 
+                                   l_1=l1_size,
+                                   n_signatures=n_signatures,
+                                   allow_negative_weights=allow_negative_weights,
+                                   refit=True)
+    
+    # fix the optimal signatures in the decoder, make them untrainable
+    S = S.drop('Feature', axis=1)
+    autoencoder.layers[-1].set_weights([np.array(S.T)])
+    autoencoder.layers[-1].trainable=False 
+
+    early_stopping = EarlyStopping(monitor='loss',patience=100) # here we do use the EarlyStopping
+    save_best_model = ModelCheckpoint(f'{output_folder_name}/best_model_refit.h5', 
+                                      monitor='loss', 
+                                      save_best_only=True, 
+                                      verbose=False)
+    autoencoder.compile(optimizer = Adam(learning_rate=0.001), # specify learning rate
+                        loss = 'mse',
+                        metrics = ['mse','kullback_leibler_divergence'])
+
+    ## Run the training for the 'autoencoder' model (which simultaneously trains the 'encoder' model)
+    print(f'Obtaining sample exposures for the consensus {n_signatures} mutational signatures...\n')
+    tf.random.set_seed(seed)
+    history = autoencoder.fit(real_data, real_data,
+                              epochs=10000, # hardcoded
+                              batch_size=batch_size,
+                              verbose=False,
+                              validation_data=(real_data, real_data),
+                              callbacks=[early_stopping,save_best_model])
+    
+    # load the weights of the best model
+    best_autoencoder = load_model(f'{output_folder_name}/best_model_refit.h5', custom_objects={"minimum_volume":minimum_volume(beta=0.001, dim=int(len(S.T)))})
+    best_encoder = Model(inputs=best_autoencoder.input, outputs=best_autoencoder.get_layer('latent_space').output)    
+    
+    # get sample exposures
+    encoded_real_df = best_encoder.predict(real_data)
+    
     # rename columns ('signatures'), and convert to pandas df
     encoded_real_df = pd.DataFrame(encoded_real_df, columns = range(0, n_signatures)).add_prefix('ae')
 
-    # check nodes activity to ensure that the model is learning a distribution of feature activations, and not zeroing out features
-    sum_node_activity = encoded_real_df.sum(axis=0).sort_values(ascending=False)
-    sum_node_activity_mean = sum_node_activity.mean()
-    print(sum_node_activity)
-
     # append sample names column
     encoded_real_df = pd.concat([real_data_sample_names, encoded_real_df], axis=1)
-
-    return encoded_real_df
+    
+    return best_encoder, encoded_real_df
