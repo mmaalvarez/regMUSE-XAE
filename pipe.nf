@@ -12,7 +12,7 @@ allow_negative_weights = Channel.from( [ 'yes', 'no' ])
 
 process run_autoencoder {
 
-    publishDir "$PWD/res/", mode: 'copy', pattern: 'nFeatures_*__nSignatures_*__nEpochs_*__batchSize_*__l1Size_*__validationPerc_*__normalization_*__allow_negative_weights_*__seed_*/*'
+    publishDir "$PWD/res/", mode: 'copy', pattern: 'nFeatures_*__nSignatures_*__nIters_*__nEpochs_*__batchSize_*__l1Size_*__validationPerc_*__normalization_*__allow_negative_weights_*__seed_*/*'
 
     time = { (params.minutes + 15*(task.attempt-1)).min }
     memory = { (params.memGB + 2*(task.attempt-1)).GB }
@@ -24,10 +24,10 @@ process run_autoencoder {
     val filename_permuted_data_training from params.filename_permuted_data_training
     val filename_permuted_data_validation from params.filename_permuted_data_validation
     // combine channels
-    set n_signatures,epochs,batch_size,l1_size,validation_perc,normalization,allow_negative_weights from n_signatures.combine(epochs).combine(batch_size).combine(l1_size).combine(validation_perc).combine(normalization).combine(allow_negative_weights)
+    set n_signatures,epochs,n_iters,batch_size,l1_size,validation_perc,normalization,allow_negative_weights from n_signatures.combine(epochs).combine(n_iters).combine(batch_size).combine(l1_size).combine(validation_perc).combine(normalization).combine(allow_negative_weights)
 
     output:
-    path 'nFeatures_*__nSignatures_*__nEpochs_*__batchSize_*__l1Size_*__validationPerc_*__normalization_*__allow_negative_weights_*__seed_*/*'
+    path 'nFeatures_*__nSignatures_*__nIters_*__nEpochs_*__batchSize_*__l1Size_*__validationPerc_*__normalization_*__allow_negative_weights_*__seed_*/*'
     file 'best_model_losses_epoch_alliters.tsv' into best_model_losses_epoch_alliters
 
     """
