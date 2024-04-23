@@ -16,5 +16,5 @@ nextflow -log $PWD/log/nextflow.log run pipe.nf --inputDir $PWD/datasets/ \
 												--filename_permuted_data_training "perm_coeff_iter*_training.tsv" \
 												--filename_permuted_data_validation "perm_coeff_validation.tsv" \
 												--minutes 1440 \
-												--memGB 10 \
+												--memGB 5 \
 												-resume

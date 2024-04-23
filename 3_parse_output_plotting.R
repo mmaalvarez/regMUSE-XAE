@@ -83,9 +83,17 @@ dir.create("plots")
 ###########
 
 ## plot all parameter configurations' losses info
-all_best_model_losses_epoch = read_tsv("res/all_best_model_losses_epoch.tsv") %>% 
+nIters = read_tsv("res/all_best_model_losses_epoch_alliters.tsv") %>% 
   separate(output_folder_name,
-           into = c('nFeatures','nSignatures','nEpochs','batchSize','l1Size','validationPerc','normalization','allow_negative_weights','seed'), sep = "__") %>% 
+           into = c('nFeatures','nSignatures', 'nIters', 'nEpochs','batchSize','l1Size','validationPerc','normalization','allow_negative_weights','seed'), sep = "__") %>% 
+  select(nIters) %>% 
+  distinct %>% 
+  mutate(nIters = as.numeric(gsub(".*_", "", nIters))) %>% 
+  pull(nIters)
+  
+all_best_model_losses_epoch = read_tsv("res/all_best_model_losses_epoch_alliters.tsv") %>% 
+  separate(output_folder_name,
+           into = c('nFeatures','nSignatures', 'nIters', 'nEpochs','batchSize','l1Size','validationPerc','normalization','allow_negative_weights','seed'), sep = "__") %>% 
   select(-seed) %>% 
   distinct %>% 
   mutate(across(matches(c('nFeatures','nSignatures','nEpochs','batchSize','l1Size','validationPerc','normalization','allow_negative_weights')),
@@ -101,6 +109,7 @@ all_best_model_losses_epoch = read_tsv("res/all_best_model_losses_epoch.tsv") %>
   mutate(model = gsub("best_model_|_loss", "", model)) %>% 
   ## get mean loss, Validation loss, "Validation / training loss", and min_val_loss_epoch for same-parameter (except seed) runs, if they exist
   group_by(nFeatures,nSignatures,nEpochs,batchSize,l1Size,validationPerc,normalization,allow_negative_weights,model) %>% 
+  # this pools all nIter iterations for the mean
   summarise_at(vars(min_val_loss_epoch, `Validation loss`, loss),
                ~mean(.)) %>% 
   ungroup
@@ -179,7 +188,7 @@ for(normalized in c("yes", "no")){
                aes(label = min_val_loss_epoch),
                fill = "white",
                col = "black",
-               size = 1,
+               size = 3,
                nudge_y = -0.13,
                nudge_x = 0.5,
                label.padding = unit(0.05, "lines"),
@@ -190,7 +199,7 @@ for(normalized in c("yes", "no")){
     ylab("Loss") +
     scale_y_continuous(sec.axis = sec_axis(~., name = "N epochs\n% samples used for validation", breaks = NULL, labels = NULL)) +
     xlab("Negative weights allowed in decoder\nK signatures") +
-    ggtitle(paste0("Epoch of model with lowest validation loss -- ", unique(all_best_model_losses_epoch$nFeatures)," features, input coefficients normalization: '", normalized, "', batch size: ", 64, ", 1st encoder layer size: ", 128, " neurons")) +
+    ggtitle(paste0("Epoch of model with lowest validation loss -- ", unique(all_best_model_losses_epoch$nFeatures)," features, ", nIters, " iterations, input coefficients normalization: '", normalized, "', batch size: ", 64, ", 1st encoder layer size: ", 128, " neurons")) +
     theme_bw() +
     theme(text = element_text(size = 8), 
           axis.text.x = element_blank(),
@@ -239,7 +248,7 @@ for(negative_weights_allowed in c("yes", "no")){
                aes(label = min_val_loss_epoch),
                fill = "white",
                col = "black",
-               size = 1,
+               size = 3,
                nudge_y = -0.13,
                nudge_x = 0.5,
                label.padding = unit(0.05, "lines"),
@@ -250,7 +259,7 @@ for(negative_weights_allowed in c("yes", "no")){
     ylab("Loss") +
     scale_y_continuous(sec.axis = sec_axis(~., name = "N epochs\n% samples used for validation", breaks = NULL, labels = NULL)) +
     xlab("Input coefficients normalization\nK signatures") +
-    ggtitle(paste0("Epoch of model with lowest validation loss -- ", unique(all_best_model_losses_epoch$nFeatures)," features, negative weights allowed in decoder: '", negative_weights_allowed, "', batch size: ", 64, ", 1st encoder layer size: ", 128, " neurons")) +
+    ggtitle(paste0("Epoch of model with lowest validation loss -- ", unique(all_best_model_losses_epoch$nFeatures)," features, ", nIters, " iterations, negative weights allowed in decoder: '", negative_weights_allowed, "', batch size: ", 64, ", 1st encoder layer size: ", 128, " neurons")) +
     theme_bw() +
     theme(text = element_text(size = 8), 
           axis.text.x = element_blank(),
@@ -272,7 +281,7 @@ for(negative_weights_allowed in c("yes", "no")){
 
 ## show signatures for a promising set of parameters
 N_features = unique(all_best_model_losses_epoch$nFeatures)
-N_epochs = 1000
+N_epochs = 2000
 validation_perc = 10
 normalized = "no"
 negative_weights_allowed = "yes"
@@ -314,7 +323,7 @@ best_parameters_plot = ggplot(all_best_model_losses_epoch %>%
              strip.position = "bottom") +
   ylab("Loss") +
   xlab("K signatures") +
-  ggtitle(paste0("Epoch of model with lowest validation loss -- ", N_features," features, ", N_epochs, " epochs, ", validation_perc, "% samples used for validation, input coefficients normalization: '", normalized, "', allow negative decoder weights: '", negative_weights_allowed, "', batch size: ", batch_size, ", 1st encoder layer size: ", l1_size, " neurons")) +
+  ggtitle(paste0("Epoch of model with lowest validation loss -- ", N_features," features, ", nIters, " iterations, ", N_epochs, " epochs, ", validation_perc, "% samples used for validation, input coefficients normalization: '", normalized, "', allow negative decoder weights: '", negative_weights_allowed, "', batch size: ", batch_size, ", 1st encoder layer size: ", l1_size, " neurons")) +
   theme_classic() +
   theme(text = element_text(size = 10), 
         axis.text.x = element_blank(),
@@ -389,7 +398,7 @@ names(fixed_jet_colors) = sample_pheno_levels
 # load exposures and weights for given set of parameters (for all values of k)
 
 N_features = unique(all_best_model_losses_epoch$nFeatures)
-N_epochs = 1000
+N_epochs = 2000
 validation_perc = 10
 normalized = "no"
 negative_weights_allowed = "yes"
@@ -424,8 +433,9 @@ for(optimal_k in range_k){
   
   # SBS weights in signatures
   weights = weights_list[[optimal_k]] %>%
-    pivot_longer(cols = contains("ae"), names_to = "Signature", values_to = "Weight") %>%
-    mutate(Signature = factor(Signature, levels = paste0("ae", seq(as.numeric(gsub("K", "", optimal_k))-1, 0)))) %>% 
+    pivot_longer(cols = !contains("Feature"), names_to = "Signature", values_to = "Weight") %>%
+    mutate(Signature = gsub("^", "ae", Signature),
+           Signature = factor(Signature, levels = paste0("ae", seq(as.numeric(gsub("K", "", optimal_k))-1, 0)))) %>% 
     arrange(Signature) %>% 
     relocate(Signature) %>% 
     mutate(feature_group = ifelse(str_detect(Feature, ">"),
