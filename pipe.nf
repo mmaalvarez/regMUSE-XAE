@@ -1,19 +1,19 @@
 #!/usr/bin/env nextflow
 
 // variables (channels)
-n_signatures = Channel.from( [ '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '24', '25', '26', '27', '28', '29', '30', '31', '32', '33', '34', '35' ] )
+n_signatures = Channel.from( [ '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '24', '25', '26', '27', '28', '29', '30', '31', '32', '33', '34', '35' ] )
 n_iters = Channel.from( [ '10' ] )
-epochs = Channel.from( [ '1000' , '2000' ] ) //, '3000', '4000', '5000', '6000' ] )
+epochs = Channel.from( [ '1000' ] ) //, '2000', '3000', '4000', '5000', '6000' ] )
 batch_size = Channel.from( [ '64' ] )
 l1_size = Channel.from( [ '128' ] )
 n_encoder_layers = Channel.from( [ '2', '3', '4' ] )
-validation_perc = Channel.from( [ '10', '20' ] ) //, '30' ] )
+validation_perc = Channel.from( [ '20' ] ) //, '10', 30' ] )
 normalization = Channel.from( [ 'no' ] ) //,'yes' 
 allow_negative_weights = Channel.from( [ 'yes' ] ) //, 'no' ] ) 
 
 process run_autoencoder {
 
-    publishDir "$PWD/res/", mode: 'copy', pattern: 'nFeatures_*__nSignatures_*__nIters_*__nEpochs_*__batchSize_*__l1Size_*__validationPerc_*__normalization_*__allow_negative_weights_*__seed_*/*'
+    publishDir "$PWD/res/", mode: 'copy', pattern: 'nFeatures_*__nSignatures_*__nIters_*__nEpochs_*__batchSize_*__l1Size_*__n_encoder_layers_*__validationPerc_*__normalization_*__allow_negative_weights_*__seed_*/*'
 
     time = { (params.minutes + 15*(task.attempt-1)).min }
     memory = { (params.memGB + 5*(task.attempt-1)).GB }
@@ -28,7 +28,7 @@ process run_autoencoder {
     set n_signatures,epochs,n_iters,batch_size,l1_size,n_encoder_layers,validation_perc,normalization,allow_negative_weights from n_signatures.combine(epochs).combine(n_iters).combine(batch_size).combine(l1_size).combine(n_encoder_layers).combine(validation_perc).combine(normalization).combine(allow_negative_weights)
 
     output:
-    path 'nFeatures_*__nSignatures_*__nIters_*__nEpochs_*__batchSize_*__l1Size_*__validationPerc_*__normalization_*__allow_negative_weights_*__seed_*/*'
+    path 'nFeatures_*__nSignatures_*__nIters_*__nEpochs_*__batchSize_*__l1Size_*__n_encoder_layers_*__validationPerc_*__normalization_*__allow_negative_weights_*__seed_*/*'
     file 'best_model_losses_epoch_alliters.tsv' into best_model_losses_epoch_alliters
 
     """
