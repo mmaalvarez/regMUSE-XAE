@@ -160,7 +160,7 @@ class minimum_volume(Constraint):
                 'beta': float(self.beta)}
 
     
-def MUSE_XAE(input_dim,l_1,n_signatures,allow_negative_weights,beta=0.001,activation='softplus',reg='min_vol',refit=False):
+def MUSE_XAE(input_dim,l_1,n_encoder_layers=3,n_signatures,allow_negative_weights,beta=0.001,activation='softplus',reg='min_vol',refit=False):
 
     # hybrid autoencoder due to non linear encoder and linear decoder
 
@@ -179,10 +179,18 @@ def MUSE_XAE(input_dim,l_1,n_signatures,allow_negative_weights,beta=0.001,activa
     
     latent_1 = Dense(l_1,activation=activation,name='encoder_layer_1')(encoder_input)
     latent_1 = BatchNormalization()(latent_1)
-    latent_1 = Dense(l_1/2,activation=activation,name='encoder_layer_2')(latent_1)
-    latent_1 = BatchNormalization()(latent_1)
-    latent_1 = Dense(l_1/4,activation=activation,name='encoder_layer_3')(latent_1)
-    latent_1 = BatchNormalization()(latent_1)
+
+    if n_encoder_layers == 2:
+        latent_1 = Dense(l_1/2,activation=activation,name='encoder_layer_2')(latent_1)
+        latent_1 = BatchNormalization()(latent_1)
+
+        if n_encoder_layers == 3:
+            latent_1 = Dense(l_1/4,activation=activation,name='encoder_layer_3')(latent_1)
+            latent_1 = BatchNormalization()(latent_1)
+
+            if n_encoder_layers == 4:
+                latent_1 = Dense(l_1/8,activation=activation,name='encoder_layer_4')(latent_1)
+                latent_1 = BatchNormalization()(latent_1)
 
     if refit==True: 
         signatures = Dense(n_signatures, activation='relu', activity_regularizer=regularizers.l1(1e-3), name='latent_space')(latent_1)
@@ -226,10 +234,11 @@ class DataSwitchCallback(Callback):
         self.epoch_count += 1
         
         
-def train_model(training_validation_dfs_dict, input_dim, feature_names, n_signatures, epochs, batch_size, l1_size, loss, activation, allow_negative_weights, seed, output_folder_name, iter):
+def train_model(training_validation_dfs_dict, input_dim, feature_names, n_signatures, epochs, batch_size, l1_size, n_encoder_layers, loss, activation, allow_negative_weights, seed, output_folder_name, iter):
         
     autoencoder,encoder = MUSE_XAE(input_dim=input_dim, 
                                    l_1=l1_size,
+                                   n_encoder_layers=n_encoder_layers,
                                    n_signatures=n_signatures,
                                    allow_negative_weights=allow_negative_weights,
                                    activation=activation)
@@ -389,12 +398,13 @@ def get_consensus_signatures(n_signatures, extractions, feature_names_col):
     return min_sil, mean_sil, consensus_sig, means_lst
 
 
-def encoder_prediction(real_data_df, real_data_sample_names, S, input_dim, l1_size, n_signatures, batch_size, allow_negative_weights, seed, output_folder_name):
+def encoder_prediction(real_data_df, real_data_sample_names, S, input_dim, l1_size, n_encoder_layers, n_signatures, batch_size, allow_negative_weights, seed, output_folder_name):
 
     real_data = np.array(real_data_df)
     
     autoencoder,encoder = MUSE_XAE(input_dim=input_dim, 
                                    l_1=l1_size,
+                                   n_encoder_layers=n_encoder_layers,
                                    n_signatures=n_signatures,
                                    allow_negative_weights=allow_negative_weights,
                                    refit=True)

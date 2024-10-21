@@ -6,9 +6,10 @@ n_iters = Channel.from( [ '10' ] )
 epochs = Channel.from( [ '1000' , '2000' ] ) //, '3000', '4000', '5000', '6000' ] )
 batch_size = Channel.from( [ '64' ] )
 l1_size = Channel.from( [ '128' ] )
+n_encoder_layers = Channel.from( [ '2', '3', '4' ] )
 validation_perc = Channel.from( [ '10', '20' ] ) //, '30' ] )
 normalization = Channel.from( [ 'no' ] ) //,'yes' 
-allow_negative_weights = Channel.from( [ 'yes' ] ) //, 'no' ]) 
+allow_negative_weights = Channel.from( [ 'yes' ] ) //, 'no' ] ) 
 
 process run_autoencoder {
 
@@ -24,7 +25,7 @@ process run_autoencoder {
     val filename_permuted_data_training from params.filename_permuted_data_training
     val filename_permuted_data_validation from params.filename_permuted_data_validation
     // combine channels
-    set n_signatures,epochs,n_iters,batch_size,l1_size,validation_perc,normalization,allow_negative_weights from n_signatures.combine(epochs).combine(n_iters).combine(batch_size).combine(l1_size).combine(validation_perc).combine(normalization).combine(allow_negative_weights)
+    set n_signatures,epochs,n_iters,batch_size,l1_size,n_encoder_layers,validation_perc,normalization,allow_negative_weights from n_signatures.combine(epochs).combine(n_iters).combine(batch_size).combine(l1_size).combine(n_encoder_layers).combine(validation_perc).combine(normalization).combine(allow_negative_weights)
 
     output:
     path 'nFeatures_*__nSignatures_*__nIters_*__nEpochs_*__batchSize_*__l1Size_*__validationPerc_*__normalization_*__allow_negative_weights_*__seed_*/*'
@@ -43,6 +44,7 @@ process run_autoencoder {
                                --epochs ${epochs} \
                                --batch_size ${batch_size} \
                                --l1_size ${l1_size} \
+                               --n_encoder_layers ${n_encoder_layers} \
                                --validation_perc ${validation_perc} \
                                --normalization ${normalization} \
                                --allow_negative_weights ${allow_negative_weights} \
