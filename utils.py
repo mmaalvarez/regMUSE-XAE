@@ -160,7 +160,7 @@ class minimum_volume(Constraint):
                 'beta': float(self.beta)}
 
     
-def MUSE_XAE(input_dim,l_1,n_encoder_layers=3,n_signatures,allow_negative_weights,beta=0.001,activation='softplus',reg='min_vol',refit=False):
+def MUSE_XAE(input_dim,l_1,n_encoder_layers,n_signatures,allow_negative_weights,beta=0.001,activation='softplus',reg='min_vol',refit=False):
 
     # hybrid autoencoder due to non linear encoder and linear decoder
 
